@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <MPU6050_light.h>
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 32 // OLED display height, in pixels
 
@@ -84,25 +85,62 @@ int Motor_PWM = 1900;
 /*
   BELOW BY GROUP C4-C
 */
+  // sonar
   #define trigPinL 29
   #define trigPinR 25
   #define echoPinL 30
   #define echoPinR 28
-  long L_sonar_dist;
-  long R_sonar_dist;
+  long L_sonar_dist,R_sonar_dist;
   int done = 1;
   unsigned long start_time = 0;
-  
-  enum Movement{
-  MoveCloser,
-  MoveAway,
-  RotateLeft,
-  RotateRight,
-  nextStage,
-  ClockWIse90,
-  AntiClockWise270,
-  ClockWIse180
+
+  //gyro
+  MPU6050 mpu(Wire);
+  float pitch, roll, yaw, angle_set;
+
+  //enum class for the state machine
+  enum class MOVEMENTTYPE{
+    LOCATING,
+    NEXTSTAGE_TRANSITION,
+    ROTATING1,
+    ROTATING2,
+    ROTATING3,
+    END_MOVEMENT
   };
+  enum class TASKTYPE{
+    ALIGNMENT,
+    MOVEANDROTATE,
+    MEASUREMENT,
+    PARKING,
+    END_STATE
+  };
+  enum class PRAKINGSTATE{
+    FORWARD,
+    TRANSIT,
+    ROTATE,
+    END_PARKING
+  };
+  TASKTYPE STATE;
+  MOVEMENTTYPE MOVEMENT;
+  PRAKINGSTATE PARKING;
+
+  // light
+  #define TOL   50           // tolerance for adc different, avoid oscillation
+  #define K   5              // Step size
+  #define LightPinL A8
+  #define LightPinR A9
+  //variables for light intensity to ADC reading equations 
+  int int_adc0, int_adc0_m, int_adc0_c;
+  int int_adc1, int_adc1_m, int_adc1_c;
+  int int_left, int_right, avg_light_intensity;
+
+  //measurment
+  float distance_to_wall_buf, angle_of_vehicle_buf, distance_to_wall, angle_of_vehicle;
+  int cnt = 0;
+
+  //parking
+  float max_light_intensity = 0;
+  float pitch_at_max_light_intensity = 0;
 
 /*
   ABOVE BY GROUP C4-C
@@ -378,9 +416,9 @@ void setup()
   display.display();
 
 
-  //Setup Voltage detector
-  pinMode(A0, INPUT);
-
+////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
   /*
     BELOW BY GROUP C4-C
   */
@@ -388,7 +426,8 @@ void setup()
   pinMode(trigPinL, OUTPUT);
   pinMode(echoPinR, INPUT);
   pinMode(trigPinR, OUTPUT);
-//  calibrate();
+
+  calibrate();
 }
 
 
@@ -397,9 +436,38 @@ void setup()
 ////////////////////////////////////////////////////////////////////////////////////////
 /*
   BELOW BY GROUP C4-C
-  notation:
-    left_sonar = trigPin
 */
+void calibrate() {
+    Serial.println("*******************");
+    Serial.println("START AUTO_Control");
+    Serial.println("*******************");
+    Serial.println("Calibrating the sensors...");
+    int_adc0=analogRead(LightPinL);   // Left sensor at ambient light intensity
+    int_adc1=analogRead(LightPinR);   // Right sensor at ambient light intensity
+    delay(500);
+    int_adc0_c=analogRead(LightPinL);   // Left sensor at zero light intensity
+    int_adc1_c=analogRead(LightPinR);   // Right sensor at zero light intensity
+    // calculate the slope of light intensity to ADC reading equations  
+    int_adc0_m=(int_adc0-int_adc0_c)/100;
+    int_adc1_m=(int_adc1-int_adc1_c)/100;
+    //calibrate the gyroscope
+    Serial.begin(115200); 
+    Wire.begin();
+    mpu.begin();
+    Serial.println("\nCalculating gyro offset, do not move MPU6050");
+    Serial.println("............");
+    delay(1000);         //delay 1000ms waiting for calibration of gyroscope to complete
+    Serial.println("Done\n*******************");
+}
+
+void get_gyro() {
+    //once call Dataupdate() update the gyroscope info 
+    mpu.update();
+    pitch = mpu.getAngleX();
+    if (pitch < 0) pitch = pitch + 360.0; // 0->360 right
+    roll = mpu.getAngleY();
+    yaw = mpu.getAngleZ();
+}
 
 void get_distance() {
     long durationL;
@@ -427,78 +495,232 @@ void get_distance() {
         R_sonar_dist = (durationR / 2.0) / 29.1;
         done = 1;
     }
+
 }
 
 void get_light() {
-   // calculate the light intensity of the sensors
-   // in the range of [0, 100]
-   int_left=(analogRead(A0)-int_adc0_c)/int_adc0_m;
-   int_right=(analogRead(A1)-int_adc1_c)/int_adc1_m;  
+  // calculate the light intensity of the sensors
+  // in the range of [0, 100]
+  int_left=(analogRead(LightPinL)-int_adc0_c)/int_adc0_m;
+  int_right=(analogRead(LightPinR)-int_adc1_c)/int_adc1_m;
+  avg_light_intensity = (int_left + int_right) / 2;
 
-   Serial.print("Left sensor intensity = ");
-   Serial.print(int_right);
-   Serial.print(";  Right sensor intensity = ");
-   Serial.print(int_left);
+
 }
 
 //TODO
-void alignment(){
-  if (L_sonar_dist < R_sonar_dist){
-    LEFT_1();
-  }else if (L_sonar_dist > R_sonar_dist){
-    RIGHT_1();
-  }
+void Alignment(){
+  
+    DataUpdate();
+    if ((95.0 < L_sonar_dist < 105.0) && (95.0 < R_sonar_dist < 105.0)){
+      if (abs(L_sonar_dist - R_sonar_dist) < 0.8){
+        STOP();
+        STATE = TASKTYPE::MOVEANDROTATE;
+        return;
+      }
+      if (L_sonar_dist > R_sonar_dist){
+        rotate_1(300,300,300,300);
+      }
+      else if (L_sonar_dist < R_sonar_dist){
+        rotate_2(300,300,300,300);
+      }
+    }
+    else{
+      rotate_1(500,500,500,500);
+    }
 
+    // if ((99.7 < L_sonar_dist < 100.3) && (99.7 < R_sonar_dist < 100.3)){
+    //   STOP();
+    //   STATE = TASKTYPE::MOVEANDROTATE;
+    //   return;
+    // }
+
+    // if (L_sonar_dist > 100.0 && R_sonar_dist > 100.0){
+    //   rotate_1(500,500,500,500);
+    // }
+    // else if (L_sonar_dist < 100.0 && R_sonar_dist < 100.0){
+    //   BACK(500, 500, 500, 500);
+    // }
+    // else if (L_sonar_dist > R_sonar_dist){
+    //   rotate_1(500,500,500,500);
+    // }
+    // else if (L_sonar_dist < R_sonar_dist){
+    //   rotate_2(500,500,500,500);
+    // }
 }
 
+void Rotation(){
+  DataUpdate();
+  if (avg_light_intensity > max_light_intensity){
+    max_light_intensity = avg_light_intensity;
+    pitch_at_max_light_intensity = pitch;
+  }
+  if (abs(pitch - angle_set) > 0.3){
+    if (pitch < angle_set)
+      rotate_1(500,500,500,500);
+    else if (pitch > angle_set)
+      rotate_2(500,500,500,500);
+  }
+  else 
+    STOP();
+}
+
+
+/**   *@TODO: PWM control   **/
 void MoveAndRotate(){
-  switch (Movement)
+  DataUpdate();
+  switch (MOVEMENT)
   {
-  case MoveCloser:
-    ADVANCE();
+  case MOVEMENTTYPE::LOCATING:
+    Serial.println("MOVEMENT: LOCATING");
+    if ((24.8 < L_sonar_dist < 25.2) && (24.8 < R_sonar_dist < 25.2)){
+      STOP();
+      MOVEMENT = MOVEMENTTYPE::NEXTSTAGE_TRANSITION;
+    }
+    else if ((L_sonar_dist > 25.0) && (R_sonar_dist > 25.0)){
+      if ((L_sonar_dist > 35.0) && (R_sonar_dist > 35.0))
+        ADVANCE(1600, 1600, 1600, 1600);
+      else 
+        ADVANCE(600, 600, 600, 600);
+    }
+    else if ((L_sonar_dist < 25.0) && (R_sonar_dist < 25.0)){
+      BACK(300, 300, 300, 300);
+    }
+    else if (L_sonar_dist > R_sonar_dist){
+      rotate_1(300,300,300,300);
+    }
+    else if (L_sonar_dist < R_sonar_dist){
+      rotate_2(300,300,300,300);
+    }
     break;
-  case MoveAway:
-    BACK(500, 500, 500, 500);
-    break;
-  case RotateLeft:
-    LEFT_2();
-    break;
-  case RotateRight:
-    RIGHT_2();
-    break;
-  case nextStage:
+
+  case MOVEMENTTYPE::NEXTSTAGE_TRANSITION:
+    Serial.println("MOVEMENT: NEXTSTAGE_TRANSITION");
     STOP();
     delay(2000);
+    MOVEMENT = MOVEMENTTYPE::ROTATING1;
     break;
-  case ClockWIse90:
-    rotate_2();
-    delay(2000);
+
+  /**    @TODO: calibrate the light sensors during the rotation   **/ 
+  case MOVEMENTTYPE::ROTATING1:
+    Serial.println("MOVEMENT: ROTATING1");
+    // CW 90
+    angle_set = 90.0;
+    Rotation();
+    if (abs(pitch - angle_set) < 1.0){
+      STOP();
+      delay(2000);
+      MOVEMENT = MOVEMENTTYPE::ROTATING2;
+    }
     break;
-  case AntiClockWise270:
-    rotate_1();
-    delay(2000);
+  case MOVEMENTTYPE::ROTATING2:
+    Serial.println("MOVEMENT: ROTATING2");
+    // CCW 270
+    angle_set = -270.0;
+    Rotation();
+    if (abs(pitch - angle_set) < 1.0){
+      STOP();
+      delay(2000);
+      // ambient light intensity as dark intensity
+      int_adc0_c=analogRead(LightPinL);   // Left sensor at zero light intensity
+      int_adc1_c=analogRead(LightPinR);   // Right sensor at zero light intensity
+      MOVEMENT = MOVEMENTTYPE::ROTATING3;
+    }
     break;
-  case ClockWIse180:
-    rotate_2();
-    delay(2000);
+  case MOVEMENTTYPE::ROTATING3:
+    Serial.println("MOVEMENT: ROTATING3");
+    // CW 180
+    angle_set = 180.0;
+    Rotation();
+    if (abs(pitch - angle_set) < 1.0){
+      STOP();
+      delay(2000);
+      // light intensity as ambient light intensity
+      int_adc0=analogRead(LightPinL);   // Left sensor at ambient light intensity
+      int_adc1=analogRead(LightPinR);   // Right sensor at ambient light intensity
+      int_adc0_m=(int_adc0-int_adc0_c)/100;
+      int_adc1_m=(int_adc1-int_adc1_c)/100;
+      MOVEMENT = MOVEMENTTYPE::END_MOVEMENT;
+    }
+    break;  
+  case MOVEMENTTYPE::END_MOVEMENT:
+    Serial.println("MOVEMENT: END_MOVEMENT");
+    STOP();
+    STATE = TASKTYPE::MEASUREMENT;
     break;
   default:
-    STOP();
     break;
   }
 }
 
 void Measurement(){
+  if (cnt == 10){
+    delay(2000); // wait 2s after the measurement
+    distance_to_wall = distance_to_wall_buf / cnt;
+    angle_of_vehicle = angle_of_vehicle_buf / cnt;
+    STATE = TASKTYPE::PARKING;
+    return;
+  }
   DataUpdate();
-  //send the data to the server
-  //TODO
+  // measure the distance from the sonar sensors
+  distance_to_wall_buf += (L_sonar_dist + R_sonar_dist) / 2;
+  // measure the angle of the vehicle to the wall
+  angle_of_vehicle_buf += (L_sonar_dist - R_sonar_dist) / 2;
+  cnt++;
 }
 
 void Parking(){
   // park the robot
   //TODO
-  STOP();
-  delay(2000);
+  DataUpdate();
+  switch (PARKING)
+  {
+  case PRAKINGSTATE::FORWARD:
+    Serial.println("PARKING: FORWARD\n*******************");
+    if (distance_to_wall > 5.1)
+      ADVANCE(500, 500, 500, 500);
+    else if  (distance_to_wall < 4.9)
+      BACK(300, 300, 300, 300);
+    else{
+      STOP();
+      PARKING = PRAKINGSTATE::TRANSIT;
+    }
+    break;
+  case PRAKINGSTATE::TRANSIT:
+    Serial.println("PARKING: TRANSIT\n*******************");
+    if (int_left > int_right ){
+      LEFT_1(300, 300, 300, 300);
+    }
+    else if (int_left < int_right){
+      RIGHT_1(300, 300, 300, 300);
+    }
+    else{
+      STOP();
+      // PARKING = PRAKINGSTATE::ROTATE;
+      PARKING = PRAKINGSTATE::END_PARKING;
+    }
+    break;
+  // TBD may not be necessary
+  case PRAKINGSTATE::ROTATE:
+    // // rotate the robot to the direction of the light source
+    // if (){
+    //   rotate_1(500, 500, 500, 500);
+    // }
+    // else if (){
+    //   rotate_2(500, 500, 500, 500);
+    // }
+    // else{
+    //   STOP();
+    //   PARKING = PRAKINGSTATE::END_PARKING;
+    // }
+    break;
+  case PRAKINGSTATE::END_PARKING:
+    Serial.println("PARKING: END_PARKING\n*******************");
+    STOP();
+    STATE = TASKTYPE::END_STATE;
+    delay(2000);
+    break;
+  }
 }
 
 void DataUpdate(){
@@ -507,34 +729,82 @@ void DataUpdate(){
   get_distance();
   // get the light intensity from the light sensors
   get_light();
+  // get the gyroscope axis x, y and z information
+  get_gyro();
+
+  //debug
+  Serial.print("Left sonar distance = ");
+  Serial.print(L_sonar_dist);
+  Serial.print(";  Right sonar distance = ");
+  Serial.println(R_sonar_dist);
+
+  Serial.print("Left sensor intensity = ");
+  Serial.print(int_right);
+  Serial.print(";  Right sensor intensity = ");
+  Serial.println(int_left);
+
+  Serial.print("Pitch (Angle_X) : ");
+  Serial.print(pitch);
+  Serial.print("  Roll  (Angle_Y) : ");
+  Serial.print(roll);
+  Serial.print("  Yaw   (Angle_Z) : ");
+  Serial.println(yaw);
+
+  // BT Serial
+  if (!Serial3.available()){
+  Serial3.print("\nL_sonar_dist: ");
+  Serial3.print(L_sonar_dist);
+  Serial3.print(",");
+  Serial3.print("R_sonar_dist: ");
+  Serial3.println(R_sonar_dist);
+  
+  Serial3.print("\nLeft_light: ");
+  Serial3.print(int_left);
+  Serial3.print(",");
+  Serial3.print("Right_light: ");
+  Serial3.println(int_right);
+
+  Serial3.print("\nGyro_pitch: ");
+  Serial3.print(pitch);
+  Serial3.print(",");
+  Serial3.print("Gyro_roll: ");
+  Serial3.print(roll);
+  Serial3.print(",");
+  Serial3.print("Gyro_yaw: ");
+  Serial3.println(yaw);
+  }
 }
 
 void AUTO_Control(){
-  // Basic structure of the AUTO_Control Start
-  Alignment();
-  delay(2000); // wait 2s after the alignment
-  MoveAndRotate();
-  Measurement();
-  delay(2000); // wait 2s after the measurement
-  Parking();
-  // Basic structure of the AUTO_Control End
-
-
-  // test
-  STOP();
-  get_distance();
-  Serial.print("L: ");
-  Serial.println(L_sonar_dist);
-  Serial.print("R: ");
-  Serial.println(R_sonar_dist);
-  if ((L_sonar_dist < 5.0) || (R_sonar_dist < 5.0)){
-    BACK(500, 500, 500, 500);
+//   // Basic structure of the AUTO_Control Start
+  DataUpdate();
+  switch (STATE)
+  {
+    case TASKTYPE::ALIGNMENT: 
+      Serial.print("*******************\nSTATE: Alignment\n");
+      Alignment();
+      break;
+    case TASKTYPE::MOVEANDROTATE:
+      Serial.print("*******************\nSTATE: MoveAndRotate\n");
+      MoveAndRotate();
+      break;
+    case TASKTYPE::MEASUREMENT:
+      Serial.print("*******************\nSTATE: Measurement\n");
+      Measurement();
+      break;
+    case TASKTYPE::PARKING:
+      Serial.print("*******************\nSTATE: Parking\n");
+      Parking();
+      break;
+    case TASKTYPE::END_STATE:
+      STOP();
+      break;
+  default:
+    STOP();
+    break;
   }
-  delay(100);
-
-//  get_light(); // TODO
+  // Basic structure of the AUTO_Control End
 }
-
 
 /*
   ABOVE BY GROUP C4-C  
