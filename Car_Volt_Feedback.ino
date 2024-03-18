@@ -77,7 +77,7 @@ int MIN_VALUE = 300;
 #define MAX_PWM   2000
 #define MIN_PWM   300
 
-int Motor_PWM = 1900;
+int Motor_PWM = 0;
 
 ////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -85,6 +85,17 @@ int Motor_PWM = 1900;
 /*
   BELOW BY GROUP C4-C
 */
+
+void AUTO_Control();
+void Alignment();
+void Rotation();
+void MoveAndRotate();
+void Measurement();
+void Parking();
+void DataUpdate();
+void calibrate();
+
+
   // sonar
   #define trigPinL 29
   #define trigPinR 25
@@ -93,6 +104,7 @@ int Motor_PWM = 1900;
   long L_sonar_dist,R_sonar_dist;
   int done = 1;
   unsigned long start_time = 0;
+  int alignemnt_cnt = 0;
 
   //gyro
   MPU6050 mpu(Wire);
@@ -108,6 +120,7 @@ int Motor_PWM = 1900;
     END_MOVEMENT
   };
   enum class TASKTYPE{
+    INIT,
     ALIGNMENT,
     MOVEANDROTATE,
     MEASUREMENT,
@@ -120,9 +133,13 @@ int Motor_PWM = 1900;
     ROTATE,
     END_PARKING
   };
-  TASKTYPE STATE;
-  MOVEMENTTYPE MOVEMENT;
-  PRAKINGSTATE PARKING;
+  TASKTYPE STATE = TASKTYPE::INIT;
+  MOVEMENTTYPE MOVEMENT = MOVEMENTTYPE::LOCATING;
+  PRAKINGSTATE PARKING = PRAKINGSTATE::FORWARD;
+
+  // alignment
+  int flag = 0;
+  int locating_cnt = 0;
 
   // light
   #define TOL   50           // tolerance for adc different, avoid oscillation
@@ -141,6 +158,21 @@ int Motor_PWM = 1900;
   //parking
   float max_light_intensity = 0;
   float pitch_at_max_light_intensity = 0;
+
+  // PWM
+  uint8_t motion_mode;
+  uint8_t motion_last_mode;
+  #define MOTION_MODE_ADVANCE 0
+  #define MOTION_MODE_BACK 1
+  #define MOTION_MODE_LEFT 2
+  #define MOTION_MODE_RIGHT 3
+  #define MOTION_MODE_ROTATE 4
+  #define MOTION_MODE_STOP 5
+  #define MOTION_MODE_ROTATE_CW 6
+  #define MOTION_MODE_ROTATE_CCW 7
+  #define MOTION_MODE_ROTATE_180 8
+  #define MOTION_MODE_ROTATE_90 9
+  #define MOTION_MODE_ROTATE_270 10
 
 /*
   ABOVE BY GROUP C4-C
@@ -166,103 +198,103 @@ void BACK(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 //     |  |  |
 //     |  ↓  |
 //    ↓C-----D↓
-void ADVANCE()
+void ADVANCE(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
-  MOTORA_FORWARD(Motor_PWM); 
-  MOTORB_BACKOFF(Motor_PWM);
-  MOTORC_FORWARD(Motor_PWM); 
-  MOTORD_BACKOFF(Motor_PWM);
+  MOTORA_FORWARD(pwm_A); 
+  MOTORB_BACKOFF(pwm_B);
+  MOTORC_FORWARD(pwm_C); 
+  MOTORD_BACKOFF(pwm_D);
 }
 //    =A-----B↑
 //     |   ↖ |
 //     | ↖   |
 //    ↑C-----D=
-void LEFT_1()
+void LEFT_1(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
-  MOTORA_STOP(Motor_PWM); 
-  MOTORB_FORWARD(Motor_PWM);
-  MOTORC_BACKOFF(Motor_PWM); 
-  MOTORD_STOP(Motor_PWM);
+  MOTORA_STOP(pwm_A); 
+  MOTORB_FORWARD(pwm_B);
+  MOTORC_BACKOFF(pwm_C); 
+  MOTORD_STOP(pwm_D);
 }
 
 //    ↓A-----B↑
 //     |  ←  |
 //     |  ←  |
 //    ↑C-----D↓
-void RIGHT_2()
+void RIGHT_2(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
-  MOTORA_FORWARD(Motor_PWM); 
-  MOTORB_FORWARD(Motor_PWM);
-  MOTORC_BACKOFF(Motor_PWM); 
-  MOTORD_BACKOFF(Motor_PWM);
+  MOTORA_FORWARD(pwm_A); 
+  MOTORB_FORWARD(pwm_B);
+  MOTORC_BACKOFF(pwm_C); 
+  MOTORD_BACKOFF(pwm_D);
 }
 //    ↓A-----B=
 //     | ↙   |
 //     |   ↙ |
 //    =C-----D↓
-void LEFT_3()
+void LEFT_3(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
-  MOTORA_FORWARD(Motor_PWM); 
-  MOTORB_STOP(Motor_PWM);
-  MOTORC_STOP(Motor_PWM); 
-  MOTORD_BACKOFF(Motor_PWM);
+  MOTORA_FORWARD(pwm_A); 
+  MOTORB_STOP(pwm_B);
+  MOTORC_STOP(pwm_C); 
+  MOTORD_BACKOFF(pwm_D);
 }
 //    ↑A-----B=
 //     | ↗   |
 //     |   ↗ |
 //    =C-----D↑
-void RIGHT_1()
+void RIGHT_1(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
-  MOTORA_BACKOFF(Motor_PWM); 
-  MOTORB_STOP(Motor_PWM);
-  MOTORC_STOP(Motor_PWM); 
-  MOTORD_FORWARD(Motor_PWM);
+  MOTORA_BACKOFF(pwm_A); 
+  MOTORB_STOP(pwm_B);
+  MOTORC_STOP(pwm_C); 
+  MOTORD_FORWARD(pwm_D);
 }
 //    ↑A-----B↓
 //     |  →  |
 //     |  →  |
 //    ↓C-----D↑
-void LEFT_2()
+void LEFT_2(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
-  MOTORA_BACKOFF(Motor_PWM); 
-  MOTORB_BACKOFF(Motor_PWM);
-  MOTORC_FORWARD(Motor_PWM); 
-  MOTORD_FORWARD(Motor_PWM);
+  MOTORA_BACKOFF(pwm_A); 
+  MOTORB_BACKOFF(pwm_B);
+  MOTORC_FORWARD(pwm_C); 
+  MOTORD_FORWARD(pwm_D);
 }
 //    =A-----B↓
 //     |   ↘ |
 //     | ↘   |
 //    ↓C-----D=
-void RIGHT_3()
+void RIGHT_3(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
-  MOTORA_STOP(Motor_PWM); 
-  MOTORB_BACKOFF(Motor_PWM);
-  MOTORC_FORWARD(Motor_PWM); 
-  MOTORD_STOP(Motor_PWM);
+  MOTORA_STOP(pwm_A); 
+  MOTORB_BACKOFF(pwm_B);
+  MOTORC_FORWARD(pwm_C); 
+  MOTORD_STOP(pwm_D);
 }
 
 //    ↑A-----B↓
 //     | ↗ ↘ |
 //     | ↖ ↙ |
 //    ↑C-----D↓
-void rotate_1()  //tate_1(uint8_t pwm_A,uint8_t pwm_B,uint8_t pwm_C,uint8_t pwm_D)
+void rotate_1(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)  // CW
 {
-  MOTORA_BACKOFF(Motor_PWM); 
-  MOTORB_BACKOFF(Motor_PWM);
-  MOTORC_BACKOFF(Motor_PWM); 
-  MOTORD_BACKOFF(Motor_PWM);
+  MOTORA_BACKOFF(pwm_A); 
+  MOTORB_BACKOFF(pwm_B);
+  MOTORC_BACKOFF(pwm_C); 
+  MOTORD_BACKOFF(pwm_D);
 }
 
 //    ↓A-----B↑
 //     | ↙ ↖ |
 //     | ↘ ↗ |
 //    ↓C-----D↑
-void rotate_2()  // rotate_2(uint8_t pwm_A,uint8_t pwm_B,uint8_t pwm_C,uint8_t pwm_D)
+void rotate_2(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)  //CCW
 {
-  MOTORA_FORWARD(Motor_PWM);
-  MOTORB_FORWARD(Motor_PWM);
-  MOTORC_FORWARD(Motor_PWM);
-  MOTORD_FORWARD(Motor_PWM);
+  MOTORA_FORWARD(pwm_A);
+  MOTORB_FORWARD(pwm_B);
+  MOTORC_FORWARD(pwm_C);
+  MOTORD_FORWARD(pwm_D);
 }
 //    =A-----B=
 //     |  =  |
@@ -352,23 +384,23 @@ void UART_Control()
   if (BT_alive_cnt <= 0) {
     STOP();
   }
-  switch (BT_Data)
-  {
-    case 'A':  ADVANCE();  M_LOG("Run!\r\n"); break;
-    case 'B':  RIGHT_2();  M_LOG("Right up!\r\n");     break;
-    case 'C':  rotate_1();                            break;
-    case 'D':  RIGHT_3();  M_LOG("Right down!\r\n");   break;
-    case 'E':  BACK(500, 500, 500, 500);     M_LOG("Run!\r\n");          break;
-    case 'F':  LEFT_3();   M_LOG("Left down!\r\n");    break;
-    case 'G':  rotate_2();                              break;
-    case 'H':  LEFT_2();   M_LOG("Left up!\r\n");     break;
-    case 'Z':  STOP();     M_LOG("Stop!\r\n");        break;
-    case 'z':  STOP();     M_LOG("Stop!\r\n");        break;
-    case 'd':  LEFT_2();   M_LOG("Left!\r\n");        break;
-    case 'b':  RIGHT_2();  M_LOG("Right!\r\n");        break;
-    case 'L':  Motor_PWM = 1500;                      break;
-    case 'M':  Motor_PWM = 500;                       break;
-  }
+//   switch (BT_Data)
+//   {
+//     case 'A':  ADVANCE();  M_LOG("Run!\r\n"); break;
+//     case 'B':  RIGHT_2();  M_LOG("Right up!\r\n");     break;
+//     case 'C':  rotate_1();                            break;
+//     case 'D':  RIGHT_3();  M_LOG("Right down!\r\n");   break;
+//     case 'E':  BACK(500, 500, 500, 500);     M_LOG("Run!\r\n");          break;
+//     case 'F':  LEFT_3();   M_LOG("Left down!\r\n");    break;
+//     case 'G':  rotate_2();                              break;
+//     case 'H':  LEFT_2();   M_LOG("Left up!\r\n");     break;
+//     case 'Z':  STOP();     M_LOG("Stop!\r\n");        break;
+//     case 'z':  STOP();     M_LOG("Stop!\r\n");        break;
+//     case 'd':  LEFT_2();   M_LOG("Left!\r\n");        break;
+//     case 'b':  RIGHT_2();  M_LOG("Right!\r\n");        break;
+//     case 'L':  Motor_PWM = 1500;                      break;
+//     case 'M':  Motor_PWM = 500;                       break;
+//   }
 }
 
 
@@ -458,13 +490,13 @@ void calibrate() {
     Serial.println("............");
     delay(1000);         //delay 1000ms waiting for calibration of gyroscope to complete
     Serial.println("Done\n*******************");
+    STATE = TASKTYPE::ALIGNMENT;
 }
 
 void get_gyro() {
     //once call Dataupdate() update the gyroscope info 
     mpu.update();
     pitch = mpu.getAngleX();
-    if (pitch < 0) pitch = pitch + 360.0; // 0->360 right
     roll = mpu.getAngleY();
     yaw = mpu.getAngleZ();
 }
@@ -492,7 +524,7 @@ void get_distance() {
         L_sonar_dist = (durationL / 2.0) / 29.1;
         digitalWrite(trigPinR, LOW);
         durationR = pulseIn(echoPinR, HIGH);
-        R_sonar_dist = (durationR / 2.0) / 29.1;
+        R_sonar_dist = (durationR / 2.0) / 29.1 - 1.1;
         done = 1;
     }
 
@@ -512,54 +544,55 @@ void get_light() {
 void Alignment(){
   
     DataUpdate();
-    if ((95.0 < L_sonar_dist < 105.0) && (95.0 < R_sonar_dist < 105.0)){
-      if (abs(L_sonar_dist - R_sonar_dist) < 0.8){
+    if (alignemnt_cnt >= 5){
+      STOP();
+      delay(2000);
+      return;
+    }
+    if (abs(L_sonar_dist - R_sonar_dist) < 1.4){
+      STOP();
+      if (flag == 0)
+        alignemnt_cnt = 0;
+      flag = 1;
+      Serial.println("Alignment done!");
+      alignemnt_cnt++;
+      if (alignemnt_cnt >= 5){
         STOP();
         STATE = TASKTYPE::MOVEANDROTATE;
         return;
       }
-      if (L_sonar_dist > R_sonar_dist){
-        rotate_1(300,300,300,300);
-      }
-      else if (L_sonar_dist < R_sonar_dist){
-        rotate_2(300,300,300,300);
-      }
     }
-    else{
-      rotate_1(500,500,500,500);
+    else if (L_sonar_dist - R_sonar_dist > 1.4){
+        flag = 0;
+        Motor_PWM = 300;
+        rotate_2(300, 300, 300, 300);
+    }
+    else if (L_sonar_dist - R_sonar_dist < -1.4){
+        flag = 0;
+        Motor_PWM = 300;
+        rotate_1(300, 300, 300, 300);
     }
 
-    // if ((99.7 < L_sonar_dist < 100.3) && (99.7 < R_sonar_dist < 100.3)){
-    //   STOP();
-    //   STATE = TASKTYPE::MOVEANDROTATE;
-    //   return;
-    // }
-
-    // if (L_sonar_dist > 100.0 && R_sonar_dist > 100.0){
-    //   rotate_1(500,500,500,500);
-    // }
-    // else if (L_sonar_dist < 100.0 && R_sonar_dist < 100.0){
-    //   BACK(500, 500, 500, 500);
-    // }
-    // else if (L_sonar_dist > R_sonar_dist){
-    //   rotate_1(500,500,500,500);
-    // }
-    // else if (L_sonar_dist < R_sonar_dist){
-    //   rotate_2(500,500,500,500);
-    // }
+    delay(150);
+    STOP();
 }
 
 void Rotation(){
-  DataUpdate();
   if (avg_light_intensity > max_light_intensity){
     max_light_intensity = avg_light_intensity;
     pitch_at_max_light_intensity = pitch;
   }
-  if (abs(pitch - angle_set) > 0.3){
-    if (pitch < angle_set)
-      rotate_1(500,500,500,500);
-    else if (pitch > angle_set)
-      rotate_2(500,500,500,500);
+  if (abs(pitch - angle_set) > 0.5){
+    if (pitch < angle_set){
+      rotate_2(300, 300, 300, 300);
+      delay(100);
+      STOP();
+      }
+    else if (pitch > angle_set){
+      rotate_1(300, 300, 300, 300);
+      delay(100);
+      STOP();
+      }
   }
   else 
     STOP();
@@ -573,24 +606,38 @@ void MoveAndRotate(){
   {
   case MOVEMENTTYPE::LOCATING:
     Serial.println("MOVEMENT: LOCATING");
-    if ((24.8 < L_sonar_dist < 25.2) && (24.8 < R_sonar_dist < 25.2)){
+    Serial.println(locating_cnt);
+    if (locating_cnt >= 5){
       STOP();
       MOVEMENT = MOVEMENTTYPE::NEXTSTAGE_TRANSITION;
+      return;
+      }
+    if (((24.0 < L_sonar_dist) &&( L_sonar_dist < 26.0)) && ((24.0 < R_sonar_dist) && ( R_sonar_dist < 26.0))){
+      STOP();
+      locating_cnt++;
     }
-    else if ((L_sonar_dist > 25.0) && (R_sonar_dist > 25.0)){
-      if ((L_sonar_dist > 35.0) && (R_sonar_dist > 35.0))
-        ADVANCE(1600, 1600, 1600, 1600);
-      else 
-        ADVANCE(600, 600, 600, 600);
+    else if ((L_sonar_dist > 26.0) && (R_sonar_dist > 26.0)){
+      locating_cnt = 0;
+      ADVANCE(300, 300, 300, 300);
     }
-    else if ((L_sonar_dist < 25.0) && (R_sonar_dist < 25.0)){
+    else if ((L_sonar_dist < 24.0) && (R_sonar_dist < 24.0)){
+      locating_cnt = 0;
+      Motor_PWM = 300;
       BACK(300, 300, 300, 300);
     }
-    else if (L_sonar_dist > R_sonar_dist){
-      rotate_1(300,300,300,300);
+    else if (L_sonar_dist - R_sonar_dist > 1.4){
+      locating_cnt = 0;
+      Motor_PWM = 300;
+      rotate_1(300, 300, 300, 300);
+      delay(200);
+      STOP();
     }
-    else if (L_sonar_dist < R_sonar_dist){
-      rotate_2(300,300,300,300);
+    else if (L_sonar_dist - R_sonar_dist < -1.4){
+      locating_cnt = 0;
+      Motor_PWM = 300;
+      rotate_2(300, 300, 300, 300);
+      delay(200);
+      STOP();
     }
     break;
 
@@ -605,7 +652,8 @@ void MoveAndRotate(){
   case MOVEMENTTYPE::ROTATING1:
     Serial.println("MOVEMENT: ROTATING1");
     // CW 90
-    angle_set = 90.0;
+    angle_set = pitch-90.0;
+    Motor_PWM = 750;
     Rotation();
     if (abs(pitch - angle_set) < 1.0){
       STOP();
@@ -616,7 +664,8 @@ void MoveAndRotate(){
   case MOVEMENTTYPE::ROTATING2:
     Serial.println("MOVEMENT: ROTATING2");
     // CCW 270
-    angle_set = -270.0;
+    angle_set = pitch+270.0;
+    Motor_PWM = 750;
     Rotation();
     if (abs(pitch - angle_set) < 1.0){
       STOP();
@@ -630,7 +679,8 @@ void MoveAndRotate(){
   case MOVEMENTTYPE::ROTATING3:
     Serial.println("MOVEMENT: ROTATING3");
     // CW 180
-    angle_set = 180.0;
+    angle_set = pitch-180.0;
+    Motor_PWM = 750;
     Rotation();
     if (abs(pitch - angle_set) < 1.0){
       STOP();
@@ -661,6 +711,7 @@ void Measurement(){
     STATE = TASKTYPE::PARKING;
     return;
   }
+  STOP();
   DataUpdate();
   // measure the distance from the sonar sensors
   distance_to_wall_buf += (L_sonar_dist + R_sonar_dist) / 2;
@@ -677,21 +728,26 @@ void Parking(){
   {
   case PRAKINGSTATE::FORWARD:
     Serial.println("PARKING: FORWARD\n*******************");
-    if (distance_to_wall > 5.1)
-      ADVANCE(500, 500, 500, 500);
+    if (distance_to_wall > 5.1){
+      Motor_PWM = 500;
+      ADVANCE(300, 300, 300, 300);
+      }
     else if  (distance_to_wall < 4.9)
       BACK(300, 300, 300, 300);
     else{
       STOP();
+      delay(1000);
       PARKING = PRAKINGSTATE::TRANSIT;
     }
     break;
   case PRAKINGSTATE::TRANSIT:
     Serial.println("PARKING: TRANSIT\n*******************");
     if (int_left > int_right ){
+      Motor_PWM = 300;
       LEFT_1(300, 300, 300, 300);
     }
     else if (int_left < int_right){
+      Motor_PWM = 300;
       RIGHT_1(300, 300, 300, 300);
     }
     else{
@@ -721,6 +777,7 @@ void Parking(){
     delay(2000);
     break;
   }
+
 }
 
 void DataUpdate(){
@@ -738,10 +795,13 @@ void DataUpdate(){
   Serial.print(";  Right sonar distance = ");
   Serial.println(R_sonar_dist);
 
-  Serial.print("Left sensor intensity = ");
-  Serial.print(int_right);
-  Serial.print(";  Right sensor intensity = ");
-  Serial.println(int_left);
+  Serial.print("PWM: ");
+  Serial.println(Motor_PWM);
+
+  // Serial.print("Left sensor intensity = ");
+  // Serial.print(int_right);
+  // Serial.print(";  Right sensor intensity = ");
+  // Serial.println(int_left);
 
   Serial.print("Pitch (Angle_X) : ");
   Serial.print(pitch);
@@ -777,9 +837,11 @@ void DataUpdate(){
 
 void AUTO_Control(){
 //   // Basic structure of the AUTO_Control Start
-  DataUpdate();
   switch (STATE)
   {
+    case TASKTYPE::INIT:
+      Serial.print("*******************\nSTATE: INIT\n");
+      break;
     case TASKTYPE::ALIGNMENT: 
       Serial.print("*******************\nSTATE: Alignment\n");
       Alignment();
@@ -803,6 +865,7 @@ void AUTO_Control(){
     STOP();
     break;
   }
+  // delay(100);
   // Basic structure of the AUTO_Control End
 }
 
@@ -822,6 +885,7 @@ void loop()
     voltCount++;
     time = millis();
 //    UART_Control(); //get USB and BT serial data
+
     AUTO_Control();
     //constrain the servo movement
     pan = constrain(pan, servo_min, servo_max);
