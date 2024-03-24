@@ -88,7 +88,8 @@ int Motor_PWM = 0;
 
 void AUTO_Control();
 void Alignment();
-void Rotation();
+void Rotation_90degree();
+void Rotate();
 void MoveAndRotate();
 void Measurement();
 void Parking();
@@ -101,10 +102,9 @@ void calibrate();
   #define trigPinR 25
   #define echoPinL 30
   #define echoPinR 28
-  long L_sonar_dist,R_sonar_dist;
+  double L_sonar_dist,R_sonar_dist;
   int done = 1;
   unsigned long start_time = 0;
-  int alignemnt_cnt = 0;
 
   //gyro
   MPU6050 mpu(Wire);
@@ -112,11 +112,14 @@ void calibrate();
 
   //enum class for the state machine
   enum class MOVEMENTTYPE{
-    LOCATING,
+    LOCATING1,
+    LOCATING2,
     NEXTSTAGE_TRANSITION,
     ROTATING1,
     ROTATING2,
     ROTATING3,
+    REALIGNMENT1,
+    REALIGNMENT2,
     END_MOVEMENT
   };
   enum class TASKTYPE{
@@ -134,12 +137,15 @@ void calibrate();
     END_PARKING
   };
   TASKTYPE STATE = TASKTYPE::INIT;
-  MOVEMENTTYPE MOVEMENT = MOVEMENTTYPE::LOCATING;
+  MOVEMENTTYPE MOVEMENT = MOVEMENTTYPE::LOCATING1;
   PRAKINGSTATE PARKING = PRAKINGSTATE::FORWARD;
 
   // alignment
   int flag = 0;
+  int alignemnt_cnt = 0;
   int locating_cnt = 0;
+  int rotate_cnt = 0;
+  int park_cnt = 0;
 
   // light
   #define TOL   50           // tolerance for adc different, avoid oscillation
@@ -149,7 +155,8 @@ void calibrate();
   //variables for light intensity to ADC reading equations 
   int int_adc0, int_adc0_m, int_adc0_c;
   int int_adc1, int_adc1_m, int_adc1_c;
-  int int_left, int_right, avg_light_intensity;
+  int int_left, int_right, avg_light_intensity, last_avg_light_intensity;
+  int light_left, light_right;
 
   //measurment
   float distance_to_wall_buf, angle_of_vehicle_buf, distance_to_wall, angle_of_vehicle;
@@ -157,7 +164,7 @@ void calibrate();
 
   //parking
   float max_light_intensity = 0;
-  float pitch_at_max_light_intensity = 0;
+  float yaw_at_max_light_intensity = 0;
 
   // PWM
   uint8_t motion_mode;
@@ -182,22 +189,22 @@ void calibrate();
 ////////////////////////////////////////////////////////////////////////////////////////
 
 
-//    ↑A-----B↑
-//     |  ↑  |
+//    ↑A-----B�??????????????
+//     |  �??????????????  |
 //     |  |  |
-//    ↑C-----D↑
+//    ↑C-----D�??????????????
 void BACK(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
-  MOTORA_BACKOFF(Motor_PWM); 
-  MOTORB_FORWARD(Motor_PWM);
-  MOTORC_BACKOFF(Motor_PWM); 
-  MOTORD_FORWARD(Motor_PWM);
+  MOTORA_BACKOFF(pwm_A); 
+  MOTORB_FORWARD(pwm_B);
+  MOTORC_BACKOFF(pwm_C); 
+  MOTORD_FORWARD(pwm_D);
 }
 
-//    ↓A-----B↓
+//    ↓A-----B�??????????????
 //     |  |  |
-//     |  ↓  |
-//    ↓C-----D↓
+//     |  �??????????????  |
+//    ↓C-----D�??????????????
 void ADVANCE(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
   MOTORA_FORWARD(pwm_A); 
@@ -205,9 +212,9 @@ void ADVANCE(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
   MOTORC_FORWARD(pwm_C); 
   MOTORD_BACKOFF(pwm_D);
 }
-//    =A-----B↑
-//     |   ↖ |
-//     | ↖   |
+//    =A-----B�??????????????
+//     |   �?????????????? |
+//     | �??????????????   |
 //    ↑C-----D=
 void LEFT_1(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
@@ -217,10 +224,10 @@ void LEFT_1(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
   MOTORD_STOP(pwm_D);
 }
 
-//    ↓A-----B↑
-//     |  ←  |
-//     |  ←  |
-//    ↑C-----D↓
+//    ↓A-----B�??????????????
+//     |  �??????????????  |
+//     |  �??????????????  |
+//    ↑C-----D�??????????????
 void RIGHT_2(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
   MOTORA_FORWARD(pwm_A); 
@@ -229,9 +236,9 @@ void RIGHT_2(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
   MOTORD_BACKOFF(pwm_D);
 }
 //    ↓A-----B=
-//     | ↙   |
-//     |   ↙ |
-//    =C-----D↓
+//     | �??????????????   |
+//     |   �?????????????? |
+//    =C-----D�??????????????
 void LEFT_3(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
   MOTORA_FORWARD(pwm_A); 
@@ -240,9 +247,9 @@ void LEFT_3(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
   MOTORD_BACKOFF(pwm_D);
 }
 //    ↑A-----B=
-//     | ↗   |
-//     |   ↗ |
-//    =C-----D↑
+//     | �??????????????   |
+//     |   �?????????????? |
+//    =C-----D�??????????????
 void RIGHT_1(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
   MOTORA_BACKOFF(pwm_A); 
@@ -250,10 +257,10 @@ void RIGHT_1(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
   MOTORC_STOP(pwm_C); 
   MOTORD_FORWARD(pwm_D);
 }
-//    ↑A-----B↓
-//     |  →  |
-//     |  →  |
-//    ↓C-----D↑
+//    ↑A-----B�??????????????
+//     |  �??????????????  |
+//     |  �??????????????  |
+//    ↓C-----D�??????????????
 void LEFT_2(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
   MOTORA_BACKOFF(pwm_A); 
@@ -261,9 +268,9 @@ void LEFT_2(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
   MOTORC_FORWARD(pwm_C); 
   MOTORD_FORWARD(pwm_D);
 }
-//    =A-----B↓
-//     |   ↘ |
-//     | ↘   |
+//    =A-----B�??????????????
+//     |   �?????????????? |
+//     | �??????????????   |
 //    ↓C-----D=
 void RIGHT_3(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
 {
@@ -273,10 +280,10 @@ void RIGHT_3(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
   MOTORD_STOP(pwm_D);
 }
 
-//    ↑A-----B↓
-//     | ↗ ↘ |
-//     | ↖ ↙ |
-//    ↑C-----D↓
+//    ↑A-----B�??????????????
+//     | �?????????????? �?????????????? |
+//     | �?????????????? �?????????????? |
+//    ↑C-----D�??????????????
 void rotate_1(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)  // CW
 {
   MOTORA_BACKOFF(pwm_A); 
@@ -285,10 +292,10 @@ void rotate_1(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)  // CW
   MOTORD_BACKOFF(pwm_D);
 }
 
-//    ↓A-----B↑
-//     | ↙ ↖ |
-//     | ↘ ↗ |
-//    ↓C-----D↑
+//    ↓A-----B�??????????????
+//     | �?????????????? �?????????????? |
+//     | �?????????????? �?????????????? |
+//    ↓C-----D�??????????????
 void rotate_2(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)  //CCW
 {
   MOTORA_FORWARD(pwm_A);
@@ -296,6 +303,7 @@ void rotate_2(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)  //CCW
   MOTORC_FORWARD(pwm_C);
   MOTORD_FORWARD(pwm_D);
 }
+
 //    =A-----B=
 //     |  =  |
 //     |  =  |
@@ -460,6 +468,10 @@ void setup()
   pinMode(trigPinR, OUTPUT);
 
   calibrate();
+  int_adc0_c = 1000;
+  int_adc1_c = 1000;
+  int_adc0_m = 10;
+  int_adc1_m = 10;
 }
 
 
@@ -470,27 +482,82 @@ void setup()
   BELOW BY GROUP C4-C
 */
 void calibrate() {
-    Serial.println("*******************");
-    Serial.println("START AUTO_Control");
-    Serial.println("*******************");
-    Serial.println("Calibrating the sensors...");
-    int_adc0=analogRead(LightPinL);   // Left sensor at ambient light intensity
-    int_adc1=analogRead(LightPinR);   // Right sensor at ambient light intensity
-    delay(500);
-    int_adc0_c=analogRead(LightPinL);   // Left sensor at zero light intensity
-    int_adc1_c=analogRead(LightPinR);   // Right sensor at zero light intensity
-    // calculate the slope of light intensity to ADC reading equations  
-    int_adc0_m=(int_adc0-int_adc0_c)/100;
-    int_adc1_m=(int_adc1-int_adc1_c)/100;
-    //calibrate the gyroscope
     Serial.begin(115200); 
+    // Serial.println("*******************");
+    // Serial.println("START AUTO_Control");
+    // Serial.println("*******************");
+    // Serial.println("Calibrating the sensors...");
+    // int_adc0=analogRead(LightPinL);   // Left sensor at ambient light intensity
+    // int_adc1=analogRead(LightPinR);   // Right sensor at ambient light intensity
+    // Serial.println(int_adc0);
+    // Serial.println(int_adc1);
+    // delay(500);
+    // int_adc0_c=analogRead(LightPinL);   // Left sensor at zero light intensity
+    // int_adc1_c=analogRead(LightPinR);   // Right sensor at zero light intensity
+    // Serial.println(int_adc0_c);
+    // Serial.println(int_adc1_c);
+
+    // // calculate the slope of light intensity to ADC reading equations  
+    // int_adc0_m=(int_adc0-int_adc0_c)/100;
+    // int_adc1_m=(int_adc1-int_adc1_c)/100;
+
+    // Serial.println(int_adc0_m);
+    // Serial.println(int_adc1_m);
+    // while(1) {
+
+    // }
+    //calibrate the gyroscope
     Wire.begin();
     mpu.begin();
     Serial.println("\nCalculating gyro offset, do not move MPU6050");
     Serial.println("............");
     delay(1000);         //delay 1000ms waiting for calibration of gyroscope to complete
     Serial.println("Done\n*******************");
+    
+    // while ( 1 ) {
+    //   last_avg_light_intensity = avg_light_intensity;
+    //   avg_light_intensity = (analogRead(LightPinL) + analogRead(LightPinR)) / 2;
+    //   Serial.println("bruhhhhhhhhhhhhhh");
+    //   Serial.println(analogRead(LightPinL));
+    //   Serial.println(analogRead(LightPinR));
+    //   Serial3.println("bruhhhhhhhhhhhhhh");
+    //   Serial3.println(analogRead(LightPinL));
+    //   Serial3.println(analogRead(LightPinR));
+    //   if ( analogRead(LightPinL) - analogRead(LightPinR) > 150 ) {
+    //     RIGHT_2(320, 320, 300, 300);
+    //   }
+    //   else if (analogRead(LightPinR) - analogRead(LightPinL) > 70 ) {
+    //     LEFT_2(320, 320, 300, 300);
+    //   } else {
+    //     if (abs(avg_light_intensity - last_avg_light_intensity) < 20){
+    //       if ( avg_light_intensity < 600 ) {
+    //         LEFT_2(320, 320, 300, 300);
+    //       } else {
+    //         park_cnt++;
+    //         STOP();
+    //       }
+    //     }
+    //     else if (avg_light_intensity > last_avg_light_intensity){
+    //       park_cnt = 0;
+    //       LEFT_2(320, 320, 300, 300);
+    //     }
+    //     else if (avg_light_intensity < last_avg_light_intensity){
+    //       park_cnt = 0;
+    //       RIGHT_2(320, 320, 300, 300);
+    //     }
+    //   }
+    //   delay(80);
+    //   STOP();
+    // }
+    // while( 1 ) {
+      
+    // }
     STATE = TASKTYPE::ALIGNMENT;
+    // STATE = TASKTYPE::MOVEANDROTATE;
+    // MOVEMENT = MOVEMENTTYPE::ROTATING1;
+    // STATE = TASKTYPE::MEASUREMENT;
+    // STATE = TASKTYPE::PARKING;
+    // PARKING = PRAKINGSTATE::TRANSIT;
 }
 
 void get_gyro() {
@@ -522,9 +589,14 @@ void get_distance() {
         digitalWrite(trigPinL, LOW);
         durationL = pulseIn(echoPinL, HIGH);
         L_sonar_dist = (durationL / 2.0) / 29.1;
+        if (L_sonar_dist > 30.0)
+          L_sonar_dist = (durationL / 2.0) / 29.1 + 1.5;
+        else if (L_sonar_dist < 30.0)
+          L_sonar_dist = (durationL / 2.0) / 29.1 + 2.0;
+
         digitalWrite(trigPinR, LOW);
         durationR = pulseIn(echoPinR, HIGH);
-        R_sonar_dist = (durationR / 2.0) / 29.1 - 1.1;
+        R_sonar_dist = (durationR / 2.0) / 29.1;
         done = 1;
     }
 
@@ -533,42 +605,72 @@ void get_distance() {
 void get_light() {
   // calculate the light intensity of the sensors
   // in the range of [0, 100]
-  int_left=(analogRead(LightPinL)-int_adc0_c)/int_adc0_m;
-  int_right=(analogRead(LightPinR)-int_adc1_c)/int_adc1_m;
-  avg_light_intensity = (int_left + int_right) / 2;
+  if (avg_light_intensity > max_light_intensity){
+    max_light_intensity = avg_light_intensity;
+    yaw_at_max_light_intensity = yaw;
+  }
 
-
+  last_avg_light_intensity = avg_light_intensity;
+  light_left = analogRead(LightPinL);
+  light_right = analogRead(LightPinR);
+  avg_light_intensity = (light_left+light_right) / 2;
+  Serial.println(light_left);
+  Serial.println(light_right);
+  if (light_left < int_adc0_c) {
+    int_adc0_c = light_left;
+  }
+  if (light_right < int_adc1_c) {
+    int_adc1_c = light_right;
+  }
+  if (light_left > int_adc0_m) {
+    int_adc0_m = light_left;
+  }
+  if (light_right > int_adc1_m) {
+    int_adc1_m = light_right;
+  }
+  int_left = (light_left - int_adc0_c) / int_adc0_m;
+  int_right = (light_right - int_adc1_c) / int_adc1_m;
+  Serial.print("max: ");
+  Serial.println(max_light_intensity);
+  Serial.print("yaw: ");
+  Serial.println(yaw);
+  Serial.print("avg: ");
+  Serial.println(avg_light_intensity);
+  Serial.print("int_left: ");
+  Serial.println(int_left);
+  Serial.print("int_right: ");
+  Serial.println(int_right);
 }
 
 //TODO
+// align along the wall
 void Alignment(){
-  
     DataUpdate();
+    // alignment_cnt is for checking 5 consective correct alignment
     if (alignemnt_cnt >= 5){
       STOP();
+      STATE = TASKTYPE::MOVEANDROTATE;
       delay(2000);
       return;
     }
     if (abs(L_sonar_dist - R_sonar_dist) < 1.4){
       STOP();
-      if (flag == 0)
-        alignemnt_cnt = 0;
-      flag = 1;
-      Serial.println("Alignment done!");
+      Serial.println("Alignment done!"); // change to "Alignment done once?"
       alignemnt_cnt++;
+
+      // maybe can delete, because this if only for faster return
       if (alignemnt_cnt >= 5){
         STOP();
-        STATE = TASKTYPE::MOVEANDROTATE;
         return;
       }
     }
-    else if (L_sonar_dist - R_sonar_dist > 1.4){
-        flag = 0;
+    else if ((L_sonar_dist - R_sonar_dist) > 1.4){
+        alignemnt_cnt = 0;
         Motor_PWM = 300;
         rotate_2(300, 300, 300, 300);
     }
-    else if (L_sonar_dist - R_sonar_dist < -1.4){
-        flag = 0;
+    else if ((L_sonar_dist - R_sonar_dist) < -1.4){
+        alignemnt_cnt = 0;
         Motor_PWM = 300;
         rotate_1(300, 300, 300, 300);
     }
@@ -577,25 +679,41 @@ void Alignment(){
     STOP();
 }
 
-void Rotation(){
-  if (avg_light_intensity > max_light_intensity){
-    max_light_intensity = avg_light_intensity;
-    pitch_at_max_light_intensity = pitch;
+// rotate 90 degree
+void Rotation_90degree(bool is_CW){
+  // if (avg_light_intensity > max_light_intensity){
+  //   max_light_intensity = avg_light_intensity;
+  //   yaw_at_max_light_intensity = yaw;
+  // }
+  Serial.print("angle_set: ");
+  Serial.println(angle_set);
+  if ( is_CW ) {
+    rotate_2(300, 300, 300, 300);
+    delay(1250);
+  } else {
+    rotate_1(300, 300, 300, 300);
+    delay(1150);
   }
-  if (abs(pitch - angle_set) > 0.5){
-    if (pitch < angle_set){
-      rotate_2(300, 300, 300, 300);
-      delay(100);
-      STOP();
-      }
-    else if (pitch > angle_set){
-      rotate_1(300, 300, 300, 300);
-      delay(100);
-      STOP();
-      }
+  STOP();
+}
+
+// rotate based on the angle_set
+void Rotate(bool is_CW){
+  // if (avg_light_intensity > max_light_intensity){
+  //   max_light_intensity = avg_light_intensity;
+  //   yaw_at_max_light_intensity = yaw;
+  // }
+  // Serial.print("angle_set: ");
+  // Serial.println(angle_set);
+  if ( is_CW ) {
+    rotate_2(300, 300, 300, 300);
+    // delay(80);
+  } else {
+    rotate_1(300, 300, 300, 300);
+    // delay(1150);
   }
-  else 
-    STOP();
+  delay(200);
+  STOP();
 }
 
 
@@ -604,43 +722,63 @@ void MoveAndRotate(){
   DataUpdate();
   switch (MOVEMENT)
   {
-  case MOVEMENTTYPE::LOCATING:
-    Serial.println("MOVEMENT: LOCATING");
+  case MOVEMENTTYPE::LOCATING1: // get 25cm close to the wall and rough locating (+-1.5)
+    Serial.println("MOVEMENT: LOCATING1");
     Serial.println(locating_cnt);
     if (locating_cnt >= 5){
       STOP();
-      MOVEMENT = MOVEMENTTYPE::NEXTSTAGE_TRANSITION;
+      Serial.println(locating_cnt);
+      MOVEMENT = MOVEMENTTYPE::LOCATING2;
+      locating_cnt = 0;
       return;
-      }
-    if (((24.0 < L_sonar_dist) &&( L_sonar_dist < 26.0)) && ((24.0 < R_sonar_dist) && ( R_sonar_dist < 26.0))){
-      STOP();
+    }
+    // if consectively pass this condition 5 times, trans to next stage LOCATING2
+    if (((23.0 < L_sonar_dist) && (L_sonar_dist < 27.0)) || ((23.0 < R_sonar_dist) && ( R_sonar_dist < 27.0))){ // 23.5 < left_dist&right_dist < 26.5 
+      STOP(); // maybe can remove this line due to line 642?
       locating_cnt++;
     }
-    else if ((L_sonar_dist > 26.0) && (R_sonar_dist > 26.0)){
+    else if ((L_sonar_dist > 26.0) || (R_sonar_dist > 26.0)){ // too close
       locating_cnt = 0;
       ADVANCE(300, 300, 300, 300);
     }
-    else if ((L_sonar_dist < 24.0) && (R_sonar_dist < 24.0)){
+    else if ((L_sonar_dist < 24.0) || (R_sonar_dist < 24.0)){ // too far away
       locating_cnt = 0;
-      Motor_PWM = 300;
       BACK(300, 300, 300, 300);
     }
-    else if (L_sonar_dist - R_sonar_dist > 1.4){
-      locating_cnt = 0;
-      Motor_PWM = 300;
-      rotate_1(300, 300, 300, 300);
-      delay(200);
-      STOP();
-    }
-    else if (L_sonar_dist - R_sonar_dist < -1.4){
-      locating_cnt = 0;
-      Motor_PWM = 300;
-      rotate_2(300, 300, 300, 300);
-      delay(200);
-      STOP();
-    }
+    delay(100);
+    STOP();
     break;
-
+  case MOVEMENTTYPE::LOCATING2: // fine locating (+- 0.5)
+    Serial.println("MOVEMENT: LOCATING2");
+    if (locating_cnt >= 5){
+      STOP();
+      MOVEMENT = MOVEMENTTYPE::NEXTSTAGE_TRANSITION;
+      locating_cnt = 0;
+      delay(2000);
+      return;
+    }
+    if (abs(L_sonar_dist - R_sonar_dist) < 1.0){
+      STOP();
+      Serial.println(locating_cnt);
+      Serial.println("Alignment done!");
+      locating_cnt++;
+      if (locating_cnt >= 5){
+        STOP();
+        return;
+      }
+    }
+    else if ((L_sonar_dist - R_sonar_dist) > 0.5){
+        locating_cnt = 0;
+        rotate_2(300, 300, 300, 300);
+    }
+    else if ((L_sonar_dist - R_sonar_dist) < -0.5){
+        locating_cnt = 0;
+        Serial.println("ROTATE1");
+        rotate_1(300, 300, 300, 300);
+    }
+    delay(40);
+    STOP();
+    break;
   case MOVEMENTTYPE::NEXTSTAGE_TRANSITION:
     Serial.println("MOVEMENT: NEXTSTAGE_TRANSITION");
     STOP();
@@ -649,50 +787,141 @@ void MoveAndRotate(){
     break;
 
   /**    @TODO: calibrate the light sensors during the rotation   **/ 
-  case MOVEMENTTYPE::ROTATING1:
+  case MOVEMENTTYPE::ROTATING1: // do the rotation tasks: CW 90 degree
     Serial.println("MOVEMENT: ROTATING1");
     // CW 90
-    angle_set = pitch-90.0;
-    Motor_PWM = 750;
-    Rotation();
-    if (abs(pitch - angle_set) < 1.0){
+    // init angle_set
+    if (rotate_cnt < 1) {
+      angle_set = yaw-90.0;
+      Rotation_90degree(true);
+      rotate_cnt++;
+    } else {
+      MOVEMENT = MOVEMENTTYPE::ROTATING2;
+      rotate_cnt = 0;
       STOP();
       delay(2000);
-      MOVEMENT = MOVEMENTTYPE::ROTATING2;
     }
+    delay(100);
+    STOP();
     break;
-  case MOVEMENTTYPE::ROTATING2:
+  case MOVEMENTTYPE::ROTATING2: // do the rotation tasks: CCW 270 degree
     Serial.println("MOVEMENT: ROTATING2");
     // CCW 270
-    angle_set = pitch+270.0;
-    Motor_PWM = 750;
-    Rotation();
-    if (abs(pitch - angle_set) < 1.0){
+    // init new angel_set
+    if (rotate_cnt < 1){
+      angle_set = yaw+270.0;
+      Rotation_90degree(false);
+      rotate_cnt++;
+      delay(100);
+    }
+    if ( rotate_cnt < 3 ) {
+      Rotation_90degree(false);
+      rotate_cnt++;
+    } else {
+      // // ambient light intensity as dark intensity
+      // int_adc0_c=analogRead(LightPinL);   // Left sensor at zero light intensity
+      // int_adc1_c=analogRead(LightPinR);   // Right sensor at zero light intensity
+      // Serial.println(int_adc0);
+      // Serial.println(int_adc1);
+      MOVEMENT = MOVEMENTTYPE::ROTATING3;
+      rotate_cnt = 0;
       STOP();
       delay(2000);
-      // ambient light intensity as dark intensity
-      int_adc0_c=analogRead(LightPinL);   // Left sensor at zero light intensity
-      int_adc1_c=analogRead(LightPinR);   // Right sensor at zero light intensity
-      MOVEMENT = MOVEMENTTYPE::ROTATING3;
     }
+    delay(100);
+    STOP();
     break;
-  case MOVEMENTTYPE::ROTATING3:
+  case MOVEMENTTYPE::ROTATING3: // do the rotation tasks: CW 180 degree
     Serial.println("MOVEMENT: ROTATING3");
     // CW 180
-    angle_set = pitch-180.0;
-    Motor_PWM = 750;
-    Rotation();
-    if (abs(pitch - angle_set) < 1.0){
+    if (rotate_cnt < 1){
+      angle_set = yaw-180.0;
+      Rotation_90degree(true);
+      rotate_cnt++;
+      delay(500);
+    }
+    if ( rotate_cnt < 2 ) {
+      Rotation_90degree(true);
+      rotate_cnt++;
+    } else {
+      // // light intensity as ambient light intensity
+      // int_adc0=analogRead(LightPinL);   // Left sensor at ambient light intensity
+      // int_adc1=analogRead(LightPinR);   // Right sensor at ambient light intensity
+      // Serial.println(int_adc0);
+      // Serial.println(int_adc1);
+      // int_adc0_m=(int_adc0-int_adc0_c)/10;
+      // int_adc1_m=(int_adc1-int_adc1_c)/10;
+      // Serial.println(int_adc0_m);
+      // Serial.println(int_adc1_m);
+      MOVEMENT = MOVEMENTTYPE::REALIGNMENT1;
+      rotate_cnt = 0;
       STOP();
       delay(2000);
-      // light intensity as ambient light intensity
-      int_adc0=analogRead(LightPinL);   // Left sensor at ambient light intensity
-      int_adc1=analogRead(LightPinR);   // Right sensor at ambient light intensity
-      int_adc0_m=(int_adc0-int_adc0_c)/100;
-      int_adc1_m=(int_adc1-int_adc1_c)/100;
-      MOVEMENT = MOVEMENTTYPE::END_MOVEMENT;
+      Serial.println(abs(yaw - angle_set));
+      Serial.println(angle_set);
+      Serial.println(yaw);
     }
+    delay(100);
+    STOP();
     break;  
+  case MOVEMENTTYPE::REALIGNMENT1:
+    Serial.println("MOVEMENT: REALGINMENT1");
+    Serial.println(locating_cnt);
+    if (locating_cnt >= 5){
+      STOP();
+      Serial.println(locating_cnt);
+      MOVEMENT = MOVEMENTTYPE::REALIGNMENT2;
+      locating_cnt = 0;
+      return;
+    }
+    // if consectively pass this condition 5 times, trans to next stage REALIGNMENT2
+    if (((23.5 < L_sonar_dist) && (L_sonar_dist < 26.5)) || ((23.5 < R_sonar_dist) && ( R_sonar_dist < 26.5))){ // 23.5 < left_dist&right_dist < 26.5 
+      STOP(); // 
+      locating_cnt++;
+    }
+    else if ((L_sonar_dist > 26.0) || (R_sonar_dist > 26.0)){ // too far away
+      locating_cnt = 0;
+      ADVANCE(300, 300, 300, 300);
+    }
+    else if ((L_sonar_dist < 24.0) || (R_sonar_dist < 24.0)){ // too close
+      locating_cnt = 0;
+      BACK(300, 300, 300, 300);
+    }
+    delay(50);
+    STOP();
+    break;
+
+  case MOVEMENTTYPE::REALIGNMENT2:
+    Serial.println("MOVEMENT: REALIGNMENT2");
+    Serial.println(locating_cnt);
+    if (locating_cnt >= 5){
+      Serial.println(locating_cnt);
+      MOVEMENT = MOVEMENTTYPE::END_MOVEMENT;
+      STOP();
+      delay(2000);
+      return;
+    } 
+    if (abs(L_sonar_dist - R_sonar_dist) < 1.0){
+      STOP();
+      Serial.println("Movement done!");
+      locating_cnt++;
+      if (locating_cnt >= 5){
+        STOP();
+        return;
+      }
+    }
+    else if ((L_sonar_dist - R_sonar_dist) > 0.5){
+      locating_cnt = 0;
+      rotate_2(300, 300, 300, 300);
+    }
+    else if ((L_sonar_dist - R_sonar_dist) < -0.5){
+      locating_cnt = 0;
+      rotate_1(300, 300, 300, 300);
+    }
+    delay(50);
+    STOP();
+    break;
+
   case MOVEMENTTYPE::END_MOVEMENT:
     Serial.println("MOVEMENT: END_MOVEMENT");
     STOP();
@@ -708,6 +937,15 @@ void Measurement(){
     delay(2000); // wait 2s after the measurement
     distance_to_wall = distance_to_wall_buf / cnt;
     angle_of_vehicle = angle_of_vehicle_buf / cnt;
+    Serial.println("MEASUREMENT");
+    Serial.println(distance_to_wall);
+    Serial.println(angle_of_vehicle);
+
+    Serial3.println("MEASUREMENT");
+    Serial3.println(distance_to_wall);
+    Serial3.println(angle_of_vehicle);
+    // Serial3.println(cnt);
+
     STATE = TASKTYPE::PARKING;
     return;
   }
@@ -716,8 +954,12 @@ void Measurement(){
   // measure the distance from the sonar sensors
   distance_to_wall_buf += (L_sonar_dist + R_sonar_dist) / 2;
   // measure the angle of the vehicle to the wall
-  angle_of_vehicle_buf += (L_sonar_dist - R_sonar_dist) / 2;
+  angle_of_vehicle_buf += abs(L_sonar_dist - R_sonar_dist) / 2;//arctan L-R /x
   cnt++;
+  // Serial.println("MEASUREMENT");
+  // Serial.println(cnt);
+  // Serial3.println("MEASUREMENT");
+  // Serial3.println(cnt);
 }
 
 void Parking(){
@@ -728,56 +970,165 @@ void Parking(){
   {
   case PRAKINGSTATE::FORWARD:
     Serial.println("PARKING: FORWARD\n*******************");
-    if (distance_to_wall > 5.1){
-      Motor_PWM = 500;
-      ADVANCE(300, 300, 300, 300);
-      }
-    else if  (distance_to_wall < 4.9)
-      BACK(300, 300, 300, 300);
-    else{
+    Serial.println(park_cnt);
+    if (park_cnt >= 5){
       STOP();
-      delay(1000);
-      PARKING = PRAKINGSTATE::TRANSIT;
+      PARKING = PRAKINGSTATE::ROTATE;
+      park_cnt = 0;
+      return;
     }
+    // if consectively pass this condition 5 times, trans to next stage LOCATING2
+    if (((5.0 < L_sonar_dist) && (L_sonar_dist < 7.0)) || ((5.0 < R_sonar_dist) && ( R_sonar_dist < 7.0))){ // 9.0 < left_dist&right_dist < 11.0 sonar not accurate, 5cm => 10cm
+      STOP(); 
+      park_cnt++;
+    }
+    else if ((L_sonar_dist > 6.5) || (R_sonar_dist > 6.5)){ // too close
+      park_cnt = 0;
+      ADVANCE(300, 300, 300, 300);
+    }
+    else if ((L_sonar_dist < 5.5) || (R_sonar_dist < 5.5)){ // too far away
+      park_cnt = 0;
+      BACK(300, 300, 300, 300);
+    }
+    delay(70);
+    STOP();
+    break;
+
+  case PRAKINGSTATE::ROTATE:
+    Serial.println("PARKING: ROTATE\n*******************");
+    if (park_cnt >= 5){
+      STOP();
+      PARKING = PRAKINGSTATE::TRANSIT;
+      park_cnt = -1;
+      int_adc0_c=analogRead(LightPinL);   // Left sensor at zero light intensity
+      int_adc1_c=analogRead(LightPinR);   // Right sensor at zero light intensity
+      int_adc0_m=analogRead(LightPinL);   // Left sensor at ambient light intensity
+      int_adc1_m=analogRead(LightPinR);   // Right sensor at ambient light intensity
+      delay(2000);
+      return;
+    }
+    // if consectively pass this condition 5 times, trans to next stage NEXTSTAGE_TRANSITION
+    if (abs(L_sonar_dist - R_sonar_dist) < 0.8){
+      STOP();
+      Serial.println(park_cnt);
+      Serial.println("Parking done!");
+      park_cnt++;
+      if (park_cnt >= 5){
+        STOP();
+        return;
+      }
+    }
+    else if (L_sonar_dist - R_sonar_dist > 0.5){
+        park_cnt = 0;
+        Motor_PWM = 300;
+        rotate_2(300, 300, 300, 300);
+    }
+    else if (L_sonar_dist - R_sonar_dist < -0.5){
+        park_cnt = 0;
+        Motor_PWM = 300;
+        Serial.println("ROTATE1");
+        rotate_1(300, 300, 300, 300);
+    }
+    delay(40);
+    STOP();
     break;
   case PRAKINGSTATE::TRANSIT:
     Serial.println("PARKING: TRANSIT\n*******************");
-    if (int_left > int_right ){
-      Motor_PWM = 300;
-      LEFT_1(300, 300, 300, 300);
-    }
-    else if (int_left < int_right){
-      Motor_PWM = 300;
-      RIGHT_1(300, 300, 300, 300);
-    }
-    else{
+    if (park_cnt == -1){
+      // LEFT_2(320, 320, 300, 300);
+      // delay(900);
+      park_cnt = 0;
+      Rotate(false);
       STOP();
-      // PARKING = PRAKINGSTATE::ROTATE;
-      PARKING = PRAKINGSTATE::END_PARKING;
     }
-    break;
-  // TBD may not be necessary
-  case PRAKINGSTATE::ROTATE:
-    // // rotate the robot to the direction of the light source
-    // if (){
-    //   rotate_1(500, 500, 500, 500);
+    // if ( park_cnt == 0 )
+    if (park_cnt >= 5){
+      STOP();
+      PARKING = PRAKINGSTATE::END_PARKING;
+      park_cnt = 0;
+      delay(2000);
+      return;
+    }
+    if ( analogRead(LightPinL) - analogRead(LightPinR) > 150 ) {
+      RIGHT_2(320, 320, 300, 300);
+      // delay(100);
+      // Rotate(false);
+    }
+    else if (analogRead(LightPinR) - analogRead(LightPinL) > 70 ) {
+      LEFT_2(320, 320, 300, 300);
+      // delay(100);
+      // Rotate(true);
+    } else {
+      if (abs(avg_light_intensity - last_avg_light_intensity) < 20){
+        if ( avg_light_intensity < 600 ) {
+          LEFT_2(320, 320, 300, 300);
+          // delay(100);
+          // Rotate(true);
+        } else {
+          park_cnt++;
+          STOP();
+        }
+      }
+      else if (avg_light_intensity > last_avg_light_intensity){
+        park_cnt = 0;
+        LEFT_2(320, 320, 300, 300);
+        // delay(100);
+        // Rotate(true);
+      }
+      else if (avg_light_intensity < last_avg_light_intensity){
+        park_cnt = 0;
+        RIGHT_2(320, 320, 300, 300);
+        // delay(100);
+        // Rotate(false);
+      }
+    }
+    delay(100);
+    STOP();
+    // if (int_left - int_right > 10){
+    //   park_cnt = 0;
+    //   LEFT_2(320, 320, 300, 300);
     // }
-    // else if (){
-    //   rotate_2(500, 500, 500, 500);
+    // else if (int_right - int_left > 10){
+    //   park_cnt = 0;
+    //   RIGHT_2(320, 320, 300, 300);
     // }
-    // else{
+    // else {
+    //   park_cnt++;
     //   STOP();
-    //   PARKING = PRAKINGSTATE::END_PARKING;
     // }
+    // delay(100);
+    // STOP();
     break;
+
   case PRAKINGSTATE::END_PARKING:
     Serial.println("PARKING: END_PARKING\n*******************");
+    if (abs(L_sonar_dist - R_sonar_dist) < 0.8){
+      STOP();
+      Serial.println(park_cnt);
+      Serial.println("Parking done!");
+      park_cnt++;
+      if (park_cnt >= 5){
+        STOP();
+        STATE = TASKTYPE::END_STATE;
+        delay(2000);
+        return;
+      }
+    }
+    else if (L_sonar_dist - R_sonar_dist > 0.5){
+        park_cnt = 0;
+        // Motor_PWM = 300;
+        rotate_2(300, 300, 300, 300);
+    }
+    else if (L_sonar_dist - R_sonar_dist < -0.5){
+        park_cnt = 0;
+        // Motor_PWM = 300;
+        // Serial.println("ROTATE1");
+        rotate_1(300, 300, 300, 300);
+    }
+    delay(40);
     STOP();
-    STATE = TASKTYPE::END_STATE;
-    delay(2000);
     break;
   }
-
 }
 
 void DataUpdate(){
@@ -809,6 +1160,8 @@ void DataUpdate(){
   Serial.print(roll);
   Serial.print("  Yaw   (Angle_Z) : ");
   Serial.println(yaw);
+
+
 
   // BT Serial
   if (!Serial3.available()){
@@ -885,8 +1238,21 @@ void loop()
     voltCount++;
     time = millis();
 //    UART_Control(); //get USB and BT serial data
+  //  DataUpdate();
+  //  delay(500);
+   AUTO_Control();
+//test
+// DataUpdate();
+// if (rotate_cnt == 0){
+//   rotate_cnt = 1;
+//   angle_set = yaw-90.0;
+//   }
+//   Rotation();
 
-    AUTO_Control();
+//test
+
+
+
     //constrain the servo movement
     pan = constrain(pan, servo_min, servo_max);
     tilt = constrain(tilt, servo_min, servo_max);
