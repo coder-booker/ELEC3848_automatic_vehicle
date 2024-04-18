@@ -1,0 +1,13 @@
+train: D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\Tennis Model.v3i.yolov8\train\images
+val: D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\Tennis Model.v3i.yolov8\valid\images
+test: D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\Tennis Model.v3i.yolov8\train\images
+
+nc: 1
+names: ['Tennis-ball']
+
+# roboflow:
+#   workspace: tennis-ai
+#   project: tennis-model
+#   version: 3
+#   license: CC BY 4.0
+#   url: https://universe.roboflow.com/tennis-ai/tennis-model/dataset/3
