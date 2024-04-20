@@ -3,6 +3,32 @@ import numpy as np
 import onnxruntime as ort
 import time
 import random
+import serial
+
+class SerialNode:
+    def __init__(self, PORT='COM6', BPS=115200):
+        self.ser = serial.Serial(PORT, BPS, timeout=3)
+        self.available = False
+        
+        if not self.ser.isOpen():
+            print("Port not available")
+        else:
+            self.available = True
+            print("successful")
+
+
+    def write_data(self, data="Hello I am Ras PI", encoding='utf-8'):
+        if self.available:
+            self.ser.write(str(data).encode(encoding));    #writ a string to port
+            print("write")
+        else:
+            print("Port not available, cannot write")
+        
+    def read_data(self):
+        if self.available:
+            return self.ser.readall()
+        else:
+            print("Port not available, cannot read")
  
 def plot_one_box(x, img, color=None, label=None, line_thickness=None):
     """
@@ -78,129 +104,61 @@ def cal_outputs(outs,nl,na,model_w,model_h,anchor_grid,stride):
         length = int(na * h * w)
         if grid[i].shape[2:4] != (h, w):
             grid[i] = _make_grid(w, h)
-
-        # print(outs[row_ind:row_ind + length, 0:2].shape)
-        # print(((np.tile(grid[i], (na, 1))) * int(stride[i])).shape)
+ 
         outs[row_ind:row_ind + length, 0:2] = (outs[row_ind:row_ind + length, 0:2] * 2. - 0.5 + np.tile(
             grid[i], (na, 1))) * int(stride[i])
-        # grid_i = np.reshape(grid[i], (1, h, w, 2))
-        # grid_i = np.tile(grid_i, (na, 1, 1, 1))
-        # print(outs[row_ind:row_ind + length, 0:2].shape)
-        # print(grid_i.shape)
-        # outs[row_ind:row_ind + length, 0:2] = (outs[row_ind:row_ind + length, 0:2] * 2. - 0.5 + grid_i) * int(stride[i])
-        
         outs[row_ind:row_ind + length, 2:4] = (outs[row_ind:row_ind + length, 2:4] * 2) ** 2 * np.repeat(
             anchor_grid[i], h * w, axis=0)
         row_ind += length
     return outs
-
-
-
-# # def process_output(outputs, img_w, img_h, strides, confThreshold, nmsThreshold):
-# #     # Convert coordinates
-# #     outputs = convert_coordinates(outputs, strides, img_w=img_w, img_h=img_h)
-
-# #     # Flatten the outputs
-# #     outputs = np.concatenate([np.reshape(output, (-1, 6)) for output in outputs], axis=0)
-
-# #     # Get the boxes, scores, and classes
-# #     boxes = outputs[:, :4]
-# #     scores = outputs[:, 4]
-# #     classes = np.argmax(outputs[:, 5:], axis=-1)
-
-# #     # Perform Non-Maximum Suppression
-# #     indices = cv2.dnn.NMSBoxes(boxes.tolist(), scores.tolist(), confThreshold, nmsThreshold)
-
-# #     # Get the final boxes, scores, and classes
-# #     final_boxes = [boxes[i[0]] for i in indices]
-# #     final_scores = [scores[i[0]] for i in indices]
-# #     final_classes = [classes[i[0]] for i in indices]
-
-# #     return final_boxes, final_scores, final_classes
-
-# def process_output(outputs, img_w, img_h, strides, confThreshold, nmsThreshold):
-#     # Check if there are any detections
-#     # if np.all(outputs[..., 4] < confThreshold):
-#     #     return [], [], []
+ 
+def post_process_opencv(outputs,model_h,model_w,img_h,img_w,thred_nms,thred_cond):
     
-#     # Convert coordinates
-#     outputs = convert_coordinates(outputs, strides, img_w=img_w, img_h=img_h)
-
-#     # Flatten the outputs
-#     outputs = np.concatenate([np.reshape(output, (-1, 6)) for output in outputs], axis=0)
-#     print(outputs.shape)
+    p_cls = outputs[:,5:]
+    if len(p_cls.shape)==1:
+        p_cls = np.expand_dims(p_cls,1)
+    cls_id = np.argmax(p_cls,axis=1)
     
-#     # Get the boxes, scores, and classes
-#     boxes = outputs[:, :4]
-#     classes = np.argmax(outputs[:, 5:], axis=-1)
-#     scores = outputs[:, 4] * classes[:]
-
-#     # Perform Non-Maximum Suppression
-#     indices = cv2.dnn.NMSBoxes(boxes.tolist(), scores.tolist(), confThreshold, nmsThreshold)
-
-#     # Get the final boxes, scores, and classes
-#     indices = np.array(indices).flatten()
-#     final_boxes = boxes[indices]
-#     final_scores = scores[indices]
-#     final_classes = classes[indices]
-
-#     return final_boxes, final_scores, final_classes
-
-# def convert_coordinates(outs, strides, img_w, img_h):
-#     # for i in range(len(outs)):
-#     #     stride = strides[i]
-#     #     grid_y, grid_x = np.mgrid[:outs[i].shape[0], :outs[i].shape[1]]
-#     #     outs[i][..., 0] = (grid_x + outs[i][..., 0]) * stride
-#     #     outs[i][..., 1] = (grid_y + outs[i][..., 1]) * stride
-#     #     outs[i][..., 2] *= img_w
-#     #     outs[i][..., 3] *= img_h
-#     i = 0
-#     stride = strides[i]
-#     out = outs[i]
-#     grid_y, grid_x = np.mgrid[:outs[i].shape[0], :outs[i].shape[1]]
-#     print(outs[i][0:2, 0:2, 0], "\n->\n", (grid_x[0:2, 0:2] + outs[i][0:2, 0:2, 0]) * stride)
-#     print(outs[i][0:2, 0:2, 1], "\n->\n", (grid_y[0:2, 0:2] + outs[i][0:2, 0:2, 1]) * stride)
-#     print(outs[i][0:2, 0:2, 2], "\n->\n", outs[i][0:2, 0:2, 2] * int(img_w/stride))
-#     print(outs[i][0:2, 0:2, 3], "\n->\n", outs[i][0:2, 0:2, 3] * int(img_h/stride))
+    conf = outputs[:,4].tolist()
+    c_x = outputs[:,0]/model_w*img_w
+    c_y = outputs[:,1]/model_h*img_h
+    w = outputs[:,2]/model_w*img_w
+    h = outputs[:,3]/model_h*img_h
+ 
+    p_x1 = np.expand_dims(c_x-w/2,-1)
+    p_y1 = np.expand_dims(c_y-h/2,-1)
+    p_x2 = np.expand_dims(c_x+w/2,-1)
+    p_y2 = np.expand_dims(c_y+h/2,-1)
+    areas = np.concatenate((p_x1,p_y1,p_x2,p_y2),axis=-1)
     
-#     print(outs[i][0:2, 0:2, :])
-#     out = outs[i]
-#     img = np.zeros((480, 640), dtype=np.uint8)
-#     for i in range(out.shape[0]):
-#         for j in range(out.shape[1]):
-#             # img[i, j] = int(out[i, j, 0] * 255)
-#             cv2.rectangle(img, (i*8, j*8), (i*8+8, j*8+8), (int((11+out[i, j, 4]) * out[i, j, 5] * 25.5)), -1)
-#             # print((11+out[i, j, 4]))
-#     cv2.imshow('Image', img)
-#     cv2.waitKey(0)
-#     cv2.destroyAllWindows()
-#     # outs[i][..., 0] = (grid_x + outs[i][..., 0]) * stride
-#     # outs[i][..., 1] = (grid_y + outs[i][..., 1]) * stride
-#     # outs[i][..., 2] *= img_w
-#     # outs[i][..., 3] *= img_h
-#     exit()
-#     return outs
-
+    areas = areas.tolist()
+    ids = cv2.dnn.NMSBoxes(areas,conf,thred_cond,thred_nms)
+    
+    
+    if len(ids)>0:
+        if len(ids.shape) == 1: ids = ids.reshape((-1, ids.shape[0]))
+        tennis_idx = ids[cls_id[ids] == 1]
+        return  np.array(areas)[tennis_idx], np.array(conf)[tennis_idx], cls_id[tennis_idx]
+    else:
+        return [], [], []
+    
 def infer_img(img0,net,model_h,model_w,nl,na,stride,anchor_grid,thred_nms=0.4,thred_cond=0.5):
     # 图像预处理
-    img = cv2.resize(img0, [model_w, model_h], interpolation=cv2.INTER_AREA)
+    img = cv2.resize(img0, [model_w,model_h], interpolation=cv2.INTER_AREA)
     # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img = img.astype(np.float32) / 255.0
     blob = np.expand_dims(np.transpose(img, (2, 0, 1)), axis=0)
  
     # 模型推理
     outs = net.run(None, {net.get_inputs()[0].name: blob})[0].squeeze(axis=0)
-    print(outs.shape)
-    # 输出坐标矫正
     outs = cal_outputs(outs,nl,na,model_w,model_h,anchor_grid,stride)
-    # outs = convert_coordinates(outs, stride, model_w, model_h)
-    print(outs.shape)
-    # 检测框计算
-    # img_h,img_w,_ = np.shape(img0)
-    boxes,confs,ids = post_process_opencv(outs,model_h,model_w,img_h,img_w,thred_nms,thred_cond)
-    # boxes, confs, ids = process_output(outs, model_h, model_w, stride, thred_nms, thred_cond)
- 
-    return  boxes,confs,ids
+    img_h,img_w,_ = np.shape(img0)
+    # print(img_h, img_w)
+    boxes, confs, ids = post_process_opencv(outs,model_h,model_w,img_h,img_w,thred_nms,thred_cond)
+    
+    detected = len(ids)
+    
+    return detected, boxes, confs, ids
  
  
  
@@ -227,45 +185,74 @@ if __name__ == "__main__":
     video = 0
     # cap = cv2.VideoCapture(video)
     flag_det = True
-    
+    usb_serial = SerialNode()
+    print("bruh")
     # while cap.isOpened():
-    while 1:
-        # success, img0 = cap.read()
-        img0 = cv2.imread(r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\test.jpg")
-        # print(len(img0))
-        # print(len(img0[0]))
-        cv2.imshow("bruh", img0)
-        # time.sleep(3)
-        cv2.waitKey(0)
-        # exit()
-        
-        t1 = time.time()
+    while True:
+        # success, img0 = cap.read()        
+        # img0 = cv2.flip(img0, -1)
+        # print(img0.shape)
+        img0 = cv2.imread(r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\tennis_dataset2\test\images\TennisBall67_jpg.rf.e5bc9f59d76694792ee2be5ecf0b44a6.jpg")
         if flag_det:
-            det_boxes,scores,ids = infer_img(img0,net,model_h,model_w,nl,na,stride,anchor_grid,thred_nms=0.4,thred_cond=0.5)
+            t1 = time.time()
+            detected, det_boxes, scores, ids = infer_img(img0,net,model_h,model_w,nl,na,stride,anchor_grid,thred_nms=0.4,thred_cond=0.5)
+            t2 = time.time()
             
-            if len(det_boxes):
-                
-                print("detected")
+            # print(len(det_boxes))
+            if detected:
                 for box,score,id in zip(det_boxes,scores,ids):
+                    c_coors = np.array([box[0]+box[2], box[1]+box[3]]) / 2
+                    
+                    print("Target detected:", dic_labels[id])
+                    print("Center coor:", c_coors)
+                    # print("Quadrant:", get_quadrant(c_coors, 640, 480))
+                    
+                    data_to_be_write = []
+                    data_to_be_write.append(str(dic_labels[id]))
+                    # data_to_be_write.append(f"{c_coors[0]},{c_coors[1]}")
+                    # data_to_be_write.append(str(get_quadrant(c_coors, 640, 480)))
+                    # if is_centered(c_coors[0], 640, 480, 80):
+                    #     print("Centered!")
+                    #     data_to_be_write.append("1")
+                    # else:
+                    #     data_to_be_write.append("0")
+                    
+                    # while time.time() - t1 < 0.4:
+                    #     pass
+                    # usb_serial.write_data('-'.join(data_to_be_write))
+                    
                     label = '%s:%.2f'%(dic_labels[id],score)
             
                     plot_one_box(box.astype(np.int16), img0, color=(255,0,0), label=label, line_thickness=None)
             else:
-                print("no target")
+                print("No target. ")
+                
+            str_FPS = "FPS: %.2f"%(1./(t2-t1))
+            cv2.putText(img0, str_FPS, (50,50), cv2.FONT_HERSHEY_COMPLEX, 1, (0,255,0), 3)
             
-            time.sleep(1)
+            print("Predict time:", t2 - t1)
+            print("Postprocess time:", time.time() - t2, "\n")
             
+            cv2.imshow("video", img0)
+            # cv2.resizeWindow("video", 800, 800)
         
-        t2 = time.time()
-        str_FPS = "FPS: %.2f"%(1./(t2-t1))
-        cv2.putText(img0,str_FPS,(50,50),cv2.FONT_HERSHEY_COMPLEX,1,(0,255,0),3)
-        
-        cv2.imshow("video",img0)
-        cv2.imwrite(r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\output.jpg", img0)
+        # data_being_read = usb_serial.read_data()
+        bs = cv2.imencode(".jpg", img0)[1].tobytes()
+        print(bs[:10])
+        print("writing...")
+        a = time.time()
+        usb_serial.write_data("bs")
+        print("consumed time:", time.time() - a)
+        exit()
+        # x = cv2.imdecode(np.asarray(bytearray(bs),dtype='uint8'), cv2.IMREAD_COLOR)
+        # cv2.imshow("video", x)
+        # cv2.waitKey(0)
+        # print(x.shape)
+        # print(cv2.imencode(".jpg", img0)[1].shape)
+        # cv2.imwrite(r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\output.jpg", img0)
         
         key=cv2.waitKey(1) & 0xFF    
         if key == ord('q'):
-        
             break
         elif key & 0xFF == ord('s'):
             flag_det = not flag_det
