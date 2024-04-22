@@ -4,17 +4,49 @@ import onnxruntime as ort
 import time
 import random
 import serial
+import base64
+import os
+import yaml
 
+class Camera():
+    def __init__(self, video=0):
+        self.cap = cv2.VideoCapture(video)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.cap.set(cv2.CAP_PROP_EXPOSURE, 200)
+        # print('宽:', self.cap.get(cv2.CAP_PROP_FRAME_WIDTH) )
+        # print('高:', self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT) )
+        # print('帧率:', self.cap.get(cv2.CAP_PROP_FPS) )
+        # print('亮度:', self.cap.get(cv2.CAP_PROP_BRIGHTNESS) )
+        # print('对比度:', self.cap.get(cv2.CAP_PROP_CONTRAST) )
+        # print('饱和度:', self.cap.get(cv2.CAP_PROP_SATURATION) )
+        # print('色调:', self.cap.get(cv2.CAP_PROP_HUE) )
+        # print('曝光度:', self.cap.get(cv2.CAP_PROP_EXPOSURE) )
+        # exit()
+ 
+    def get_frame(self):
+        success, img = self.cap.read()
+        img = cv2.flip(img, -1)
+        return img
+    
 class SerialNode:
-    def __init__(self, PORT='COM6', BPS=115200):
-        self.ser = serial.Serial(PORT, BPS, timeout=3)
-        self.available = False
-        
-        if not self.ser.isOpen():
+    def __init__(self, real=True, PORT='COM6', BPS=115200):
+        # self.ser = serial.Serial(PORT, BPS, timeout=3)
+        try:
+            self.ser = serial.Serial(PORT, BPS, timeout=3)
+        except Exception as e:
+            print(e)
+            
+        if not real:
+            self.available = False
             print("Port not available")
         else:
-            self.available = True
-            print("successful")
+            if self.ser.isOpen():
+                self.available = True
+                print("Serial successful")
+            else:
+                self.available = False
+                print("Port not available")
 
 
     def write_data(self, data="Hello I am Ras PI", encoding='utf-8'):
@@ -28,235 +60,235 @@ class SerialNode:
         if self.available:
             return self.ser.readall()
         else:
-            print("Port not available, cannot read")
- 
-def plot_one_box(x, img, color=None, label=None, line_thickness=None):
-    """
-    description: Plots one bounding box on image img,
-                 this function comes from YoLov5 project.
-    param: 
-        x:      a box likes [x1,y1,x2,y2]
-        img:    a opencv image object
-        color:  color to draw rectangle, such as (0,255,0)
-        label:  str
-        line_thickness: int
-    return:
-        no return
-    """
-    tl = (
-        line_thickness or round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1
-    )  # line/font thickness
-    color = color or [random.randint(0, 255) for _ in range(3)]
-    c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
-    cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
-    if label:
-        tf = max(tl - 1, 1)  # font thickness
-        t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
-        c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
-        cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
-        cv2.putText(
-            img,
-            label,
-            (c1[0], c1[1] - 2),
-            0,
-            tl / 3,
-            [225, 255, 255],
-            thickness=tf,
-            lineType=cv2.LINE_AA,
-        )
- 
-def _make_grid(nx, ny):
-    xv, yv = np.meshgrid(np.arange(ny), np.arange(nx))
-    return np.stack((xv, yv), 2).reshape((-1, 2)).astype(np.float32)
- 
- 
-def post_process_opencv(outputs,model_h,model_w,img_h,img_w,thred_nms,thred_cond):
-    conf = outputs[:,4].tolist()
-    c_x = outputs[:,0]/model_w*img_w
-    c_y = outputs[:,1]/model_h*img_h
-    w  = outputs[:,2]/model_w*img_w
-    h  = outputs[:,3]/model_h*img_h
-    p_cls = outputs[:,5:]
-    if len(p_cls.shape)==1:
-        p_cls = np.expand_dims(p_cls,1)
-    cls_id = np.argmax(p_cls,axis=1)
- 
-    p_x1 = np.expand_dims(c_x-w/2,-1)
-    p_y1 = np.expand_dims(c_y-h/2,-1)
-    p_x2 = np.expand_dims(c_x+w/2,-1)
-    p_y2 = np.expand_dims(c_y+h/2,-1)
-    areas = np.concatenate((p_x1,p_y1,p_x2,p_y2),axis=-1)
-    
-    areas = areas.tolist()
-    ids = cv2.dnn.NMSBoxes(areas,conf,thred_cond,thred_nms)
-    if len(ids)>0:
-        return  np.array(areas)[ids],np.array(conf)[ids],cls_id[ids]
-    else:
-        return [],[],[]
+            return "Port not available, cannot read".encode('utf-8')
 
+class Predictor():
+    def __init__(self, yaml_path):
+        with open(yaml_path, 'r') as file:
+            params = yaml.safe_load(file)
+        
+        self.net = ort.InferenceSession(params['model_path'], ort.SessionOptions())
+        self.model_h = params['model_h']
+        self.model_w = params['model_w']
+        self.nl = params['nl']
+        self.na = params['na']
+        self.stride = params['stride']
+        self.anchor_grid = np.asarray(params['anchors'], dtype=np.float32).reshape(self.nl, -1, 2)
+        self.dic_labels = params['dic_labels']
+        self.target_ids = params['target_ids']
+        self.thred_nms = params['thred_nms']
+        self.thred_cond = params['thred_cond']
+    
+    def _make_grid(self, nx, ny):
+        xv, yv = np.meshgrid(np.arange(ny), np.arange(nx))
+        return np.stack((xv, yv), 2).reshape((-1, 2)).astype(np.float32)
 
-def cal_outputs(outs,nl,na,model_w,model_h,anchor_grid,stride):
     
-    row_ind = 0
-    grid = [np.zeros(1)] * nl
-    for i in range(nl):
-        h, w = int(model_w/ stride[i]), int(model_h / stride[i])
-        length = int(na * h * w)
-        if grid[i].shape[2:4] != (h, w):
-            grid[i] = _make_grid(w, h)
- 
-        outs[row_ind:row_ind + length, 0:2] = (outs[row_ind:row_ind + length, 0:2] * 2. - 0.5 + np.tile(
-            grid[i], (na, 1))) * int(stride[i])
-        outs[row_ind:row_ind + length, 2:4] = (outs[row_ind:row_ind + length, 2:4] * 2) ** 2 * np.repeat(
-            anchor_grid[i], h * w, axis=0)
-        row_ind += length
-    return outs
- 
-def post_process_opencv(outputs,model_h,model_w,img_h,img_w,thred_nms,thred_cond):
+    def cal_outputs(self, outs):
+        row_ind = 0
+        grid = [np.zeros(1)] * self.nl
+        for i in range(self.nl):
+            h, w = int(self.model_w/ self.stride[i]), int(self.model_h / self.stride[i])
+            length = int(self.na * h * w)
+            if grid[i].shape[2:4] != (h, w):
+                grid[i] = self._make_grid(w, h)
     
-    p_cls = outputs[:,5:]
-    if len(p_cls.shape)==1:
-        p_cls = np.expand_dims(p_cls,1)
-    cls_id = np.argmax(p_cls,axis=1)
+            outs[row_ind:row_ind + length, 0:2] = (outs[row_ind:row_ind + length, 0:2] * 2. - 0.5 + np.tile(
+                grid[i], (self.na, 1))) * int(self.stride[i])
+            outs[row_ind:row_ind + length, 2:4] = (outs[row_ind:row_ind + length, 2:4] * 2) ** 2 * np.repeat(
+                self.anchor_grid[i], h * w, axis=0)
+            row_ind += length
+        return outs
+
+    def post_process_opencv(self, outputs, img_h, img_w):
+        conf = outputs[:,4].tolist()
+        c_x = outputs[:,0] / self.model_w * img_w
+        c_y = outputs[:,1] / self.model_h * img_h
+        w  = outputs[:,2] / self.model_w * img_w
+        h  = outputs[:,3] / self.model_h * img_h
+        p_cls = outputs[:,5:]
+        if len(p_cls.shape)==1:
+            p_cls = np.expand_dims(p_cls,1)
+        cls_id = np.argmax(p_cls,axis=1)
     
-    conf = outputs[:,4].tolist()
-    c_x = outputs[:,0]/model_w*img_w
-    c_y = outputs[:,1]/model_h*img_h
-    w = outputs[:,2]/model_w*img_w
-    h = outputs[:,3]/model_h*img_h
- 
-    p_x1 = np.expand_dims(c_x-w/2,-1)
-    p_y1 = np.expand_dims(c_y-h/2,-1)
-    p_x2 = np.expand_dims(c_x+w/2,-1)
-    p_y2 = np.expand_dims(c_y+h/2,-1)
-    areas = np.concatenate((p_x1,p_y1,p_x2,p_y2),axis=-1)
+        p_x1 = np.expand_dims(c_x-w/2,-1)
+        p_y1 = np.expand_dims(c_y-h/2,-1)
+        p_x2 = np.expand_dims(c_x+w/2,-1)
+        p_y2 = np.expand_dims(c_y+h/2,-1)
+        areas = np.concatenate((p_x1,p_y1,p_x2,p_y2),axis=-1)
+        
+        areas = areas.tolist()
+        ids = cv2.dnn.NMSBoxes(areas, conf, self.thred_cond, self.thred_nms)
+        if len(ids)>0:
+            if len(ids.shape) == 1: ids = ids.reshape((-1, ids.shape[0]))
+            valid_ids = ids[np.isin(cls_id[ids], self.target_ids)]
+            return  np.array(areas)[valid_ids], np.array(conf)[valid_ids], cls_id[valid_ids]
+        else:
+            return [], [], []
+
+    def infer_img(self, frame):
+        t1 = time.time()
+        
+        # 图像预处理
+        img = cv2.resize(frame, [self.model_w, self.model_h], interpolation=cv2.INTER_AREA)
+        # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = img.astype(np.float32) / 255.0
+        blob = np.expand_dims(np.transpose(img, (2, 0, 1)), axis=0)
     
-    areas = areas.tolist()
-    ids = cv2.dnn.NMSBoxes(areas,conf,thred_cond,thred_nms)
+        # 模型推理
+        outs = self.net.run(None, {self.net.get_inputs()[0].name: blob})[0].squeeze(axis=0)
+        outs = self.cal_outputs(outs)
+        img_h, img_w, _ = np.shape(frame)
+        # print(img_h, img_w)
+        boxes, confs, ids = self.post_process_opencv(outs, img_h, img_w)
+        
+        detected = len(ids)
+        
+        print("Predict time:", time.time() - t1)
+        
+        return detected, boxes, confs, ids
+
+class PostProcessor():
+    def __init__(self, send_to_serial=True):
+        self.usb_serial = SerialNode(send_to_serial)
+        self.center_thres = 80
+        self.area_range = 1000
+        # self.desired_area = 
     
+    def _can_catch(self, area):
+        # if 
+        return 0
     
-    if len(ids)>0:
-        if len(ids.shape) == 1: ids = ids.reshape((-1, ids.shape[0]))
-        tennis_idx = ids[cls_id[ids] == 1]
-        return  np.array(areas)[tennis_idx], np.array(conf)[tennis_idx], cls_id[tennis_idx]
-    else:
-        return [], [], []
-    
-def infer_img(img0,net,model_h,model_w,nl,na,stride,anchor_grid,thred_nms=0.4,thred_cond=0.5):
-    # 图像预处理
-    img = cv2.resize(img0, [model_w,model_h], interpolation=cv2.INTER_AREA)
-    # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img = img.astype(np.float32) / 255.0
-    blob = np.expand_dims(np.transpose(img, (2, 0, 1)), axis=0)
- 
-    # 模型推理
-    outs = net.run(None, {net.get_inputs()[0].name: blob})[0].squeeze(axis=0)
-    outs = cal_outputs(outs,nl,na,model_w,model_h,anchor_grid,stride)
-    img_h,img_w,_ = np.shape(img0)
-    # print(img_h, img_w)
-    boxes, confs, ids = post_process_opencv(outs,model_h,model_w,img_h,img_w,thred_nms,thred_cond)
-    
-    detected = len(ids)
-    
-    return detected, boxes, confs, ids
- 
- 
- 
- 
-if __name__ == "__main__":
- 
-    # 模型加载
-    model_pb_path = r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\tennis_c3.onnx"
-    so = ort.SessionOptions()
-    net = ort.InferenceSession(model_pb_path, so)
-    
-    # 标签字典
-    dic_labels= {0:'Racket', 1:'Tennis ball', 2:'Person'}
-    
-    # 模型参数
-    model_h = 320
-    model_w = 320
-    nl = 3
-    na = 3
-    stride=[8.,16.,32.]
-    anchors = [[10, 13, 16, 30, 33, 23], [30, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
-    anchor_grid = np.asarray(anchors, dtype=np.float32).reshape(nl, -1, 2)
-    
-    video = 0
-    # cap = cv2.VideoCapture(video)
-    flag_det = True
-    usb_serial = SerialNode()
-    print("bruh")
-    # while cap.isOpened():
-    while True:
-        # success, img0 = cap.read()        
-        # img0 = cv2.flip(img0, -1)
-        # print(img0.shape)
-        img0 = cv2.imread(r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\tennis_dataset2\test\images\TennisBall67_jpg.rf.e5bc9f59d76694792ee2be5ecf0b44a6.jpg")
-        if flag_det:
-            t1 = time.time()
-            detected, det_boxes, scores, ids = infer_img(img0,net,model_h,model_w,nl,na,stride,anchor_grid,thred_nms=0.4,thred_cond=0.5)
-            t2 = time.time()
-            
-            # print(len(det_boxes))
-            if detected:
-                for box,score,id in zip(det_boxes,scores,ids):
-                    c_coors = np.array([box[0]+box[2], box[1]+box[3]]) / 2
-                    
-                    print("Target detected:", dic_labels[id])
-                    print("Center coor:", c_coors)
-                    # print("Quadrant:", get_quadrant(c_coors, 640, 480))
-                    
-                    data_to_be_write = []
-                    data_to_be_write.append(str(dic_labels[id]))
-                    # data_to_be_write.append(f"{c_coors[0]},{c_coors[1]}")
-                    # data_to_be_write.append(str(get_quadrant(c_coors, 640, 480)))
-                    # if is_centered(c_coors[0], 640, 480, 80):
-                    #     print("Centered!")
-                    #     data_to_be_write.append("1")
-                    # else:
-                    #     data_to_be_write.append("0")
-                    
-                    # while time.time() - t1 < 0.4:
-                    #     pass
-                    # usb_serial.write_data('-'.join(data_to_be_write))
-                    
-                    label = '%s:%.2f'%(dic_labels[id],score)
-            
-                    plot_one_box(box.astype(np.int16), img0, color=(255,0,0), label=label, line_thickness=None)
-            else:
-                print("No target. ")
+    def process(self, frame, detected, boxes, confs, ids, dic_labels, predict_time):
+        t1 = time.time()
+        if detected:
+            for box, score, id in zip(boxes, confs, ids):
+                c_coors = np.array([box[0]+box[2], box[1]+box[3]]) / 2
+                area = int(abs((box[0] - box[2]) * (box[1] - box[3])))
                 
-            str_FPS = "FPS: %.2f"%(1./(t2-t1))
-            cv2.putText(img0, str_FPS, (50,50), cv2.FONT_HERSHEY_COMPLEX, 1, (0,255,0), 3)
-            
-            print("Predict time:", t2 - t1)
-            print("Postprocess time:", time.time() - t2, "\n")
-            
-            cv2.imshow("video", img0)
-            # cv2.resizeWindow("video", 800, 800)
+                print("Target detected:", dic_labels[id])
+                print("Center coor:", c_coors)
+                print("Quadrant:", self._get_quadrant(c_coors, 640, 480))
+                print("Box:", box)
+                print("Area:", area)
+                
+                data_to_be_write = ""
+                data_to_be_write += "1"
+                # data_to_be_write.append(f"{c_coors[0]},{c_coors[1]}")
+                # data_to_be_write.append(str(self._get_quadrant(c_coors, 640, 480)))
+                data_to_be_write += str(self._is_centered(c_coors[0], frame.shape[1]))
+                print("Center?:", data_to_be_write[-1])
+                data_to_be_write += self._can_catch(area)
+                
+                # while time.time() - t1 < 0.4:
+                #     pass
+                data_to_be_write = ''.join(data_to_be_write)
+                
+                label = '%s:%.2f'%(dic_labels[id],score)
+                self._plot_one_box(box.astype(np.int16), frame, color=(255,0,0), label=label, line_thickness=None)
+        else:
+            print("No target. ")
+            data_to_be_write = '000'
         
-        # data_being_read = usb_serial.read_data()
-        bs = cv2.imencode(".jpg", img0)[1].tobytes()
-        print(bs[:10])
-        print("writing...")
-        a = time.time()
-        usb_serial.write_data("bs")
-        print("consumed time:", time.time() - a)
-        exit()
-        # x = cv2.imdecode(np.asarray(bytearray(bs),dtype='uint8'), cv2.IMREAD_COLOR)
-        # cv2.imshow("video", x)
-        # cv2.waitKey(0)
-        # print(x.shape)
-        # print(cv2.imencode(".jpg", img0)[1].shape)
-        # cv2.imwrite(r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\output.jpg", img0)
+        self.usb_serial.write_data(data_to_be_write)
+            
+        str_FPS = "FPS: %.2f"%(1./(predict_time + 0.001))
+        cv2.putText(frame, str_FPS, (50,50), cv2.FONT_HERSHEY_COMPLEX, 1, (0,255,0), 3)
         
-        key=cv2.waitKey(1) & 0xFF    
+        cv2.imshow("real-time vision", frame)
+        cv2.resizeWindow('real-time vision', 640, 480)
+        
+        print("Postprocess time:", time.time() - t1, "\n")
+        
+        received_data = self.usb_serial.read_data()
+        print("Received data:", received_data)
+        print("Received data(decoded):", received_data.decode('utf-8'))
+        
+    # def _get_quadrant(self, target_coors, w, h):
+    #     x, y = target_coors
+    #     boundary = [w/2, h/2]
+    #     if 0 < x < boundary[0] and 0 < y < boundary[1]:
+    #         return 1
+    #     elif boundary[0] < x < w and 0 < y < boundary[1]:
+    #         return 2
+    #     elif 0 < x < boundary[0] and boundary[1] < y < h:
+    #         return 3
+    #     elif boundary[0] < x < w and boundary[1] < y < h:
+    #         return 4
+    #     else:
+    #         return -1
+
+    def _is_centered(self, x, w):
+        # only determine x centering
+        temp = self.center_thres / 2
+        left_thres = w/2 - temp
+        right_thres = w/2 + temp
+        if 0 < x < left_thres:
+            return 1
+        elif left_thres < x < right_thres:
+            return 2
+        elif right_thres < x < w:
+            return 3
+        # return 
+    
+    def _plot_one_box(self, x, img, color=None, label=None, line_thickness=None):
+        """
+        description: Plots one bounding box on image img,
+                    this function comes from YoLov5 project.
+        param: 
+            x:      a box likes [x1,y1,x2,y2]
+            img:    a opencv image object
+            color:  color to draw rectangle, such as (0,255,0)
+            label:  str
+            line_thickness: int
+        return:
+            no return
+        """
+        tl = (
+            line_thickness or round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1
+        )  # line/font thickness
+        color = color or [random.randint(0, 255) for _ in range(3)]
+        c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
+        cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
+        if label:
+            tf = max(tl - 1, 1)  # font thickness
+            t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
+            c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
+            cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
+            cv2.putText(
+                img,
+                label,
+                (c1[0], c1[1] - 2),
+                0,
+                tl / 3,
+                [225, 255, 255],
+                thickness=tf,
+                lineType=cv2.LINE_AA,
+            )
+
+
+if __name__ == "__main__":
+    # cap = Camera()
+    predictor = Predictor(r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\line.yaml")
+    post_processor = PostProcessor(False)
+
+    while True:
+        # frame = cap.get_frame()
+        frame = cv2.imread(r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\black_line2_dataset\test\images\frame01931_png.rf.e12a5814a31249b4804387b75ae19f16.jpg")
+        detected, boxes, confs, ids = predictor.infer_img(frame)
+        dic_labels = predictor.dic_labels
+        post_processor.process(frame, detected, boxes, confs, ids, dic_labels)
+        
+        key=cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             break
         elif key & 0xFF == ord('s'):
             flag_det = not flag_det
             print(flag_det)
-            
-    # cap.release() 
+        # elif key == ord("c"):
+        #     i += 1
+        #     file_name = a[i]
+
+    # cap.cap.release()
     cv2.destroyAllWindows()
+    

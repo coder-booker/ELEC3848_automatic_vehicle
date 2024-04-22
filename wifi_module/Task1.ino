@@ -55,7 +55,7 @@ void setup() {
     // Serial.println(WiFi.localIP());
     // Serial.println("-------------------------");
   webPage += "<div align=\"center\"><h1>REAL TIME IMAGE</h1>";
-  webPage +=  "<video src=\"video\" autoplay = \"autoplay\" width=\"720px\" height=\"480px\"></video>";
+  webPage += "<img id=\"img_stream\" width=\"640px\" height=\"640px\"></img>";
   webPage += "<div align=\"center\"><h1>ESP8266 CAR</h1>";
   webPage += "<a href=\"FL\"><button style=\"height:200px;width:200px\"><font size=\"20\">CCW</font></button></a>";
   webPage += "<a href=\"F2\"><button style=\"height:200px;width:200px\"><font size=\"20\">F</font></button></a>";
@@ -70,6 +70,35 @@ void setup() {
   webPage += "<a href=\"SE1\"><button style=\"height:200px;width:200px\"><font size=\"20\">1</font></button></a>";
   webPage += "<a href=\"SE2\"><button style=\"height:200px;width:200px\"><font size=\"20\">2</font></button></a>";
   webPage += "<a href=\"SE3\"><button style=\"height:200px;width:200px\"><font size=\"20\">3</font></button></a><br>";
+  webPage += "<script>
+        let hexString =\"你图片的16进制字符串\";
+        const imageUrl = imgRun(hexString);
+        const imgElement = document.getElementById(\"img_stream\");
+        imgElement.src = imageUrl;
+
+        function imgRun(value) {
+            let pos = 0;
+            let len = value.length;
+            if (len % 2 != 0) {
+                return null;
+            }
+            len /= 2;
+            const hex = [];
+            for (let i = 0; i < len; i++) {
+                const s = value.substr(pos, 2);
+                const v = parseInt(s, 16);
+                hex.push(v);
+                pos += 2;
+            }
+            let binary = '';
+            const bytes = new Uint8Array(hex);
+            const len2 = bytes.byteLength;
+            for (let i = 0; i < len2; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return 'data:image/png;base64,' + window.btoa(binary);
+        }
+    </script>"
   // webPage += "<a href=\"SE4\"><button style=\"height:200px;width:200px\"><font size=\"20\">4</font></button></a>";
   // webPage += "<a href=\"SE5\"><button style=\"height:200px;width:200px\"><font size=\"20\">5</font></button></a>";
   // webPage += "<a href=\"SE6\"><button style=\"height:200px;width:200px\"><font size=\"20\">6</font></button></a><br>";
