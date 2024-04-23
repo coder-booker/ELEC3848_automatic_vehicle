@@ -6,8 +6,6 @@ import random
 import serial
 import yaml
 import socket
-from multiprocessing import Process, Queue
-# import threading
 
 
 # class WifiNode():
@@ -58,7 +56,7 @@ class SerialNode:
         if real:
             try:
                 self.ser = serial.Serial(PORT, BPS, timeout=1)
-                
+                time.sleep(0.5)
                 print("Connected. ")
             except Exception as e:
                 print(e)
@@ -68,7 +66,6 @@ class SerialNode:
             self.available = False
         
         # self.write_data()
-        # time.sleep(1)
     
     def _check(self):
         if self.available and self.ser.isOpen():
@@ -111,17 +108,6 @@ class Camera():
         success, img = self.cap.read()
         img = cv2.flip(img, -1)
         return img
-    
-    def thread_frame(self):
-        global shared_frame, cam_end
-        while not cam_end.is_set():
-            with threading.Lock():
-                success, img = self.cap.read()
-                img = cv2.flip(img, -1)
-                shared_frame = img
-            # cv2.imshow("real-time vision", img)
-            # cv2.resizeWindow('real-time vision', 640, 480)
-            # cv2.waitKey(1)
     
 
 class Predictor():
@@ -219,8 +205,6 @@ class PostProcessor():
         self.center_thres = 80
         self.area_range = 1000
         self.desired_area = 34000
-        
-        self.data_buffer = []
     
     def _can_catch(self, area):
         if self.desired_area - self.area_range < area < self.desired_area + self.area_range:
@@ -228,7 +212,7 @@ class PostProcessor():
         else:
             return 0
     
-    def process(self, frame, detected, boxes, confs, ids, dic_labels, predict_time, temp_data):
+    def process(self, frame, detected, boxes, confs, ids, dic_labels, predict_time):
         t1 = time.time()
         if detected:
             for box, score, id in zip(boxes, confs, ids):
@@ -330,39 +314,27 @@ class PostProcessor():
 
 
 if __name__ == "__main__":
-    # cam_is_thread = True
-    shared_frame = None
-    cam_end = False
     cap = Camera()
-    # if cam_is_thread:
-    cam_thread = threading.Thread(target=cap.thread_frame)
-    cam_thread.start()
-    
     predictor = Predictor(r"/home/3848c4/Desktop/3848/tennis.yaml")
-    post_processor = PostProcessor(True)
+    post_processor = PostProcessor(False)
 
-    temp_data = '(A)'
-    # global shared_frame
+    # temp_data = '(A)'
     while True:
-        # frame = cap.get_frame()
-        with threading.Lock():
-            detected, boxes, confs, ids, predict_time = predictor.infer_img(shared_frame)
-            dic_labels = predictor.dic_labels
-            post_processor.process(shared_frame, detected, boxes, confs, ids, dic_labels, predict_time, temp_data)
+        frame = cap.get_frame()
+        detected, boxes, confs, ids, predict_time = predictor.infer_img(frame)
+        dic_labels = predictor.dic_labels
+        post_processor.process(frame, detected, boxes, confs, ids, dic_labels, predict_time) #, temp_data)
         
         key=cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             post_processor.usb_serial.ser.close()
-            
-            cam_end.set()
-            cam_thread.join()
             break
-        elif key == ord('t'):
-            if temp_data == '(A)':
-                temp_data = '(Z)'
-            else:
-                temp_data = '(A)'
-            time.sleep(2)
+        # elif key == ord('t'):
+        #     if temp_data == '(A)':
+        #         temp_data = '(Z)'
+        #     else:
+        #         temp_data = '(A)'
+        #     time.sleep(2)
         # elif key & 0xFF == ord('s'):
         #     flag_det = not flag_det
         #     print(flag_det)
