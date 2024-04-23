@@ -229,28 +229,33 @@ void UART_Control()
         }// Break when bracket closed
       }
     }
-    int commaIndex = myString.indexOf(','); //Split data in bracket (a, b, c)
-    //Search for the next comma just after the first
-    int secondCommaIndex = myString.indexOf(',', commaIndex + 1);
-    String firstValue = myString.substring(0, commaIndex);
-    String secondValue = myString.substring(commaIndex + 1, secondCommaIndex);
-    String thirdValue = myString.substring(secondCommaIndex + 1); // To the end of the string
-    if ((firstValue.toInt() > servo_min and firstValue.toInt() < servo_max) and  //Convert them to numbers
-        (secondValue.toInt() > servo_min and secondValue.toInt() < servo_max)) {
-      pan = firstValue.toInt();
-      tilt = secondValue.toInt();
-      window_size = thirdValue.toInt();
+    if (myString == "A") {
+      ADVANCE();
+      delay(10)
+      stop();
     }
+    // int commaIndex = myString.indexOf(','); //Split data in bracket (a, b, c)
+    // //Search for the next comma just after the first
+    // int secondCommaIndex = myString.indexOf(',', commaIndex + 1);
+    // String firstValue = myString.substring(0, commaIndex);
+    // String secondValue = myString.substring(commaIndex + 1, secondCommaIndex);
+    // String thirdValue = myString.substring(secondCommaIndex + 1); // To the end of the string
+    // if ((firstValue.toInt() > servo_min and firstValue.toInt() < servo_max) and  //Convert them to numbers
+    //     (secondValue.toInt() > servo_min and secondValue.toInt() < servo_max)) {
+    //   pan = firstValue.toInt();
+    //   tilt = secondValue.toInt();
+    //   window_size = thirdValue.toInt();
+    // }
     SERIAL.flush();
-    Serial3.println(myString);
-    Serial3.println("Done");
-    if (myString != "") {
-      display.clearDisplay();
-      display.setCursor(0, 0);     // Start at top-left corner
-      display.println("Serial_Data = ");
-      display.println(myString);
-      display.display();
-    }
+    // Serial3.println(myString);
+    // Serial3.println("Done");
+    // if (myString != "") {
+    //   display.clearDisplay();
+    //   display.setCursor(0, 0);     // Start at top-left corner
+    //   display.println("Serial_Data = ");
+    //   display.println(myString);
+    //   display.display();
+    // }
   }
 
 
@@ -353,13 +358,13 @@ void loop()
 {
   // run the code in every 20ms
   if (millis() > (time + 15)) {
-    voltCount++;
+    // voltCount++;
     time = millis();
     UART_Control(); //get USB and BT serial data
 
     //constrain the servo movement
-    pan = constrain(pan, servo_min, servo_max);
-    tilt = constrain(tilt, servo_min, servo_max);
+    // pan = constrain(pan, servo_min, servo_max);
+    // tilt = constrain(tilt, servo_min, servo_max);
     
     //send signal to servo
     servo_pan.write(pan);

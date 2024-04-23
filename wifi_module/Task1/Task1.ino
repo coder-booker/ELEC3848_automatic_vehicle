@@ -14,7 +14,7 @@
 ESP8266WiFiMulti wifiMulti;
 ESP8266WebServer esp8266_server(80);
 
-WiFiServer wifi_server(81); // Set up a server at port 
+WiFiServer wifi_server(80); // Set up a server at port 
 WiFiClient client;
 // bool client_connected = false;
 
@@ -32,18 +32,18 @@ void setup() {
     Serial.begin(460800);
     // ArduinoSerial.begin(9600);
     
-    WiFi.begin("ELEC3848", "password");
-    Serial.print("Connecting..");
-    while (WiFi.status() != WL_CONNECTED){
-      delay(500);
-      Serial.print(".");
-    }
-    Serial.println();  
-    Serial.print("Connected, IP Address:");  
-    Serial.println(WiFi.localIP());
-
-    // WiFi.softAP("ESP8266", "12345678"); // Set up a hotspot with the name ESP8266 and password 12345678
+    WiFi.softAP("ESP8266", "12345678"); // Set up a hotspot with the name ESP8266 and password 12345678
     wifi_server.begin(); // Start the server
+    // WiFi.begin("ELEC3848", "password");
+    Serial.print("Connecting..");
+    // while (WiFi.status() != WL_CONNECTED){
+    //   delay(500);
+    //   Serial.print(".");
+    // }
+    // Serial.println();  
+    // Serial.print("Connected, IP Address:");  
+    // Serial.println(WiFi.localIP());
+
     // Serial.println("Hotspot started");
     // Serial.print("IP address is: ");
     // Serial.println(WiFi.softAPIP());
@@ -272,10 +272,10 @@ void handleWifiClient() {
   } else {
 
     if (client) {  // If a new client connects,
-      Serial.println("New Client.");
+      // Serial.println("New Client.");
       String currentLine = ""; 
       if (client.available()) {  
-        wifiClientMsg = client.readStringUntil('\r');
+        wifiClientMsg = client.read();
         Serial.println(wifiClientMsg);
         client.print(wifiClientMsg);
         client.flush();

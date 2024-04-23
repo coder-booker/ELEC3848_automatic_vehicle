@@ -7,6 +7,7 @@ import serial
 import yaml
 import socket
 from multiprocessing import Process, Queue
+import pickle
 # import threading
 
 
@@ -54,6 +55,7 @@ class SerialNode:
     def __init__(self, real=True, PORT='/dev/ttyUSB0', BPS=115200):
         # self.ser = serial.Serial(PORT, BPS, timeout=3)
         self.available = True
+        self.current_time = time.time()
         print("Connecting...")
         if real:
             try:
@@ -67,6 +69,7 @@ class SerialNode:
         else:
             self.available = False
         
+        
         # self.write_data()
         # time.sleep(1)
     
@@ -75,13 +78,18 @@ class SerialNode:
             print(f"Serial connected. a:{self.available} | o:{self.ser.isOpen()}")
             return True
         else:
-            print(f"Port not available. a:{self.available} | o:{self.ser.isOpen()}")
+            print(f"Port not available. a:{self.available}")
             return False
 
     def write_data(self, data="Hi I am Pi"):
         if self._check():
-            self.ser.write(str(data).encode());    #writ a string to port
-            print("Sent data:", data)
+            # print(self.current_time - time.time())
+            if time.time() - self.current_time > 1: 
+                self.ser.write(str(data).encode());    #writ a string to port
+                print("Sent data:", data)
+                self.current_time = time.time()
+            # else:
+                
         else:
             print("Port not available, cannot write")
         
@@ -97,6 +105,11 @@ class Camera():
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         self.cap.set(cv2.CAP_PROP_EXPOSURE, 200)
+        self.cap.set(cv2.CAP_PROP_FPS, 15)
+        self.cap.set(5, 15)
+        
+        self.current_time = time.time()
+        self.start = False
         # print('宽:', self.cap.get(cv2.CAP_PROP_FRAME_WIDTH) )
         # print('高:', self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT) )
         # print('帧率:', self.cap.get(cv2.CAP_PROP_FPS) )
@@ -112,13 +125,55 @@ class Camera():
         img = cv2.flip(img, -1)
         return img
     
-    def thread_frame(self):
-        global shared_frame, cam_end
-        while not cam_end.is_set():
-            with threading.Lock():
-                success, img = self.cap.read()
-                img = cv2.flip(img, -1)
-                shared_frame = img
+    def multi_get_frame(self, queue):
+        while True:
+            # print("asdasdsasd")
+            # if self.current_time - time.time() > 0.1:
+            if queue.empty():
+                if self.start:
+                    _, serialized_data = queue.get()
+                    if _ == 2:
+                        # while time.time() - self.current_time < 1:
+                        #     pass
+                        # else:
+                        #     print()
+                        #     print("""
+                        # #         afblkjedgvw;oidefihswe
+                        # #         asflajhesbfcakefvae
+                        # #         afciashkfbckaesjfbca
+                        # #         fahfcajsbfe""")
+                        #     print()
+                        #     self.current_time = time.time()
+                        # time.sleep(1)
+                        serialized_frame = pickle.dumps(self.get_frame())
+                        queue.put([0, serialized_frame])
+                        # self.has_photo = True
+                        print("Camera put frame. ")
+                    else:
+                        queue.put([_, serialized_data])
+                        # print("Camera put frame. ")
+                else:
+                    serialized_frame = pickle.dumps(self.get_frame())
+                    queue.put([0, serialized_frame])
+                    # self.has_photo = True
+                    self.start = True
+                    print("Camera put frame. ")
+                    
+            # else:
+                
+            # else:
+                # if time.time() - self.current_time > 1:
+                # print("Camera waiting. ")
+
+                # self.current_time = time.time()
+    
+    # def thread_frame(self):
+    #     global shared_frame, cam_end
+    #     while not cam_end.is_set():
+    #         with threading.Lock():
+    #             success, img = self.cap.read()
+    #             img = cv2.flip(img, -1)
+    #             shared_frame = img
             # cv2.imshow("real-time vision", img)
             # cv2.resizeWindow('real-time vision', 640, 480)
             # cv2.waitKey(1)
@@ -140,6 +195,8 @@ class Predictor():
         self.target_ids = params['target_ids']
         self.thred_nms = params['thred_nms']
         self.thred_cond = params['thred_cond']
+        
+        # self.current_time = time.time()
     
     def _make_grid(self, nx, ny):
         xv, yv = np.meshgrid(np.arange(ny), np.arange(nx))
@@ -211,14 +268,36 @@ class Predictor():
         
         return detected, boxes, confs, ids, predict_time
 
+    def multi_predict(self, queue):
+        while True:
+            # if self.current_time - time.time() > 0.1:
+            if not queue.empty():
+                _, serialized_frame = queue.get()
+                if _ == 0:
+                    shared_data = pickle.loads(serialized_frame)
+                    detected, boxes, confs, ids, predict_time = self.infer_img(shared_data)
+                    serialized_img = pickle.dumps([shared_data, detected, boxes, confs, ids, self.dic_labels, predict_time])
+                    queue.put([1, serialized_img])
+                    print("Predictor put img. ")
+                else:
+                    queue.put([_, serialized_frame])
+                # else:
+                    # print("Predictor waiting. ")
+                    # if time.time() - self.current_time > 1:
+                        # self.current_time = time.time()
+                # self.current_time = time.time()
+            # time.sleep(0.1}
+
 class PostProcessor():
     def __init__(self, display=True):
         self.display = display
-        self.usb_serial = SerialNode()
+        self.usb_serial = SerialNode(True)
         # self.wifi_server = WifiNode("192.168.50.21")
         self.center_thres = 80
         self.area_range = 1000
         self.desired_area = 34000
+        
+        self.current_time2 = time.time()
         
         self.data_buffer = []
     
@@ -266,6 +345,7 @@ class PostProcessor():
         if self.display:
             cv2.imshow("real-time vision", frame)
             cv2.resizeWindow('real-time vision', 640, 480)
+            cv2.waitKey(1)
         
         # ta = time.time()
         # self.usb_serial.ser.close()
@@ -274,12 +354,33 @@ class PostProcessor():
         # self.usb_serial.read_data()
         # tb = time.time()
         
-        # while time.time() - ta < 0.5:
+        # while time.time() - t1 < 1:
         #     pass
-        
-        # print("BRUHHHH:", time.time() - ta)
-        # self.usb_serial.read_data()
 
+    def multi_postprocess(self, queue):
+        while True:
+            # if self.current_time2 - time.time() > 0.1:
+            # print("asdasdsasd")
+            if not queue.empty():
+                _, serialized_data = queue.get()
+                if _ == 1:
+                    print("Postprocessor get data. ")
+                    # shared_frame = pickle.loads(serialized_data)
+                    frame, detected, boxes, confs, ids, dict_labels, predict_time = pickle.loads(serialized_data)
+                    temp_data = '(A)'
+                    self.process(frame, detected, boxes, confs, ids, dict_labels, predict_time, temp_data)
+                    # serialized_img = pickle.dumps([detected, boxes, confs, ids, predict_time])
+                    # queue.put([1, serialized_img])
+                    queue.put([2, 'bruh'])
+                    print("Predictor processed. ")
+                else:
+                    queue.put([_, serialized_data])
+            # else:
+                # if time.time() - self.current_time > 1:
+                    # print("Predictor waiting. ")
+                    
+
+                # self.current2_time = time.time()
     def _is_centered(self, x, w):
         # only determine x centering
         temp = self.center_thres / 2
@@ -331,38 +432,47 @@ class PostProcessor():
 
 if __name__ == "__main__":
     # cam_is_thread = True
-    shared_frame = None
-    cam_end = False
-    cap = Camera()
+    # shared_frame = None
+    # cam_end = False
     # if cam_is_thread:
-    cam_thread = threading.Thread(target=cap.thread_frame)
-    cam_thread.start()
+    # cam_thread = threading.Thread(target=cap.thread_frame)
+    # cam_thread.start()
     
+    queue = Queue()
+    cap = Camera()
     predictor = Predictor(r"/home/3848c4/Desktop/3848/tennis.yaml")
     post_processor = PostProcessor(True)
+    
+    cam_process = Process(target=cap.multi_get_frame, args=(queue,))
+    predict_process = Process(target=predictor.multi_predict, args=(queue,))
+    post_processor_process = Process(target=post_processor.multi_postprocess, args=(queue,))
+    
+    cam_process.start()
+    predict_process.start()
+    post_processor_process.start()
 
     temp_data = '(A)'
     # global shared_frame
     while True:
         # frame = cap.get_frame()
-        with threading.Lock():
-            detected, boxes, confs, ids, predict_time = predictor.infer_img(shared_frame)
-            dic_labels = predictor.dic_labels
-            post_processor.process(shared_frame, detected, boxes, confs, ids, dic_labels, predict_time, temp_data)
+        # with threading.Lock():
+        # detected, boxes, confs, ids, predict_time = predictor.infer_img(shared_frame)
+        # dic_labels = predictor.dic_labels
+        # post_processor.process(shared_frame, detected, boxes, confs, ids, dic_labels, predict_time, temp_data)
         
         key=cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             post_processor.usb_serial.ser.close()
             
-            cam_end.set()
-            cam_thread.join()
+            # cam_end.set()
+            # cam_thread.join()
             break
-        elif key == ord('t'):
-            if temp_data == '(A)':
-                temp_data = '(Z)'
-            else:
-                temp_data = '(A)'
-            time.sleep(2)
+        # elif key == ord('t'):
+        #     if temp_data == '(A)':
+        #         temp_data = '(Z)'
+        #     else:
+        #         temp_data = '(A)'
+        #     time.sleep(2)
         # elif key & 0xFF == ord('s'):
         #     flag_det = not flag_det
         #     print(flag_det)

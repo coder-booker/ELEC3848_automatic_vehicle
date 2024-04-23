@@ -6,8 +6,7 @@ import random
 import serial
 import yaml
 import socket
-from multiprocessing import Process, Queue
-# import threading
+import threading
 
 
 # class WifiNode():
@@ -79,11 +78,12 @@ class SerialNode:
             return False
 
     def write_data(self, data="Hi I am Pi"):
-        if self._check():
-            self.ser.write(str(data).encode());    #writ a string to port
-            print("Sent data:", data)
-        else:
-            print("Port not available, cannot write")
+        with threading.Lock():
+            if self._check():
+                self.ser.write(str(data).encode());    #writ a string to port
+                print("Sent data:", data)
+            else:
+                print("Port not available, cannot write")
         
     def read_data(self):
         if self._check():
@@ -330,13 +330,10 @@ class PostProcessor():
 
 
 if __name__ == "__main__":
-    # cam_is_thread = True
-    shared_frame = None
-    cam_end = False
     cap = Camera()
     # if cam_is_thread:
-    cam_thread = threading.Thread(target=cap.thread_frame)
-    cam_thread.start()
+    # cam_thread = threading.Thread(target=cap.thread_frame)
+    # cam_thread.start()
     
     predictor = Predictor(r"/home/3848c4/Desktop/3848/tennis.yaml")
     post_processor = PostProcessor(True)
@@ -344,18 +341,18 @@ if __name__ == "__main__":
     temp_data = '(A)'
     # global shared_frame
     while True:
-        # frame = cap.get_frame()
-        with threading.Lock():
-            detected, boxes, confs, ids, predict_time = predictor.infer_img(shared_frame)
-            dic_labels = predictor.dic_labels
-            post_processor.process(shared_frame, detected, boxes, confs, ids, dic_labels, predict_time, temp_data)
+        frame = cap.get_frame()
+        
+        detected, boxes, confs, ids, predict_time = predictor.infer_img(frame)
+        dic_labels = predictor.dic_labels
+        post_processor.process(frame, detected, boxes, confs, ids, dic_labels, predict_time, temp_data)
         
         key=cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             post_processor.usb_serial.ser.close()
             
-            cam_end.set()
-            cam_thread.join()
+            # cam_end.set()
+            # cam_thread.join()
             break
         elif key == ord('t'):
             if temp_data == '(A)':
