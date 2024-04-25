@@ -4,8 +4,8 @@ import onnxruntime as ort
 import time
 import random
 import serial
-import base64
-import os
+# import base64
+# import os
 import yaml
 
 class Camera():
@@ -146,7 +146,7 @@ class Predictor():
         
         print("Predict time:", time.time() - t1)
         
-        return detected, boxes, confs, ids
+        return detected, boxes, confs, ids, time.time() - t1
 
 class PostProcessor():
     def __init__(self, send_to_serial=True):
@@ -166,19 +166,19 @@ class PostProcessor():
                 c_coors = np.array([box[0]+box[2], box[1]+box[3]]) / 2
                 area = int(abs((box[0] - box[2]) * (box[1] - box[3])))
                 
-                print("Target detected:", dic_labels[id])
-                print("Center coor:", c_coors)
-                print("Quadrant:", self._get_quadrant(c_coors, 640, 480))
-                print("Box:", box)
-                print("Area:", area)
+                # print("Target detected:", dic_labels[id])
+                # print("Center coor:", c_coors)
+                # print("Quadrant:", self._get_quadrant(c_coors, 640, 480))
+                # print("Box:", box)
+                # print("Area:", area)
                 
                 data_to_be_write = ""
                 data_to_be_write += "1"
                 # data_to_be_write.append(f"{c_coors[0]},{c_coors[1]}")
                 # data_to_be_write.append(str(self._get_quadrant(c_coors, 640, 480)))
                 data_to_be_write += str(self._is_centered(c_coors[0], frame.shape[1]))
-                print("Center?:", data_to_be_write[-1])
-                data_to_be_write += self._can_catch(area)
+                # print("Center?:", data_to_be_write[-1])
+                data_to_be_write += str(self._can_catch(area))
                 
                 # while time.time() - t1 < 0.4:
                 #     pass
@@ -187,7 +187,7 @@ class PostProcessor():
                 label = '%s:%.2f'%(dic_labels[id],score)
                 self._plot_one_box(box.astype(np.int16), frame, color=(255,0,0), label=label, line_thickness=None)
         else:
-            print("No target. ")
+            # print("No target. ")
             data_to_be_write = '000'
         
         self.usb_serial.write_data(data_to_be_write)
@@ -201,8 +201,8 @@ class PostProcessor():
         print("Postprocess time:", time.time() - t1, "\n")
         
         received_data = self.usb_serial.read_data()
-        print("Received data:", received_data)
-        print("Received data(decoded):", received_data.decode('utf-8'))
+        # print("Received data:", received_data)
+        # print("Received data(decoded):", received_data.decode('utf-8'))
         
     # def _get_quadrant(self, target_coors, w, h):
     #     x, y = target_coors
@@ -269,15 +269,27 @@ class PostProcessor():
 
 if __name__ == "__main__":
     # cap = Camera()
-    predictor = Predictor(r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\line.yaml")
+    predictor = Predictor(r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\tennis_e.yaml")
     post_processor = PostProcessor(False)
 
+    a = 0
+    i = 1
+    # print((0.0093 - 0.0078)/0.0093 )
+    # exit()
     while True:
         # frame = cap.get_frame()
-        frame = cv2.imread(r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\black_line2_dataset\test\images\frame01931_png.rf.e12a5814a31249b4804387b75ae19f16.jpg")
-        detected, boxes, confs, ids = predictor.infer_img(frame)
+        frame = cv2.imread(r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\proposed_func\tennis_dataset2\test\images\4_jpg.rf.165a2589d39cae9e20f5b5ebc39f647f.jpg")
+        detected, boxes, confs, ids, predict_time = predictor.infer_img(frame)
+        a += predict_time
+        print("avg time:", a/i)
+        i += 1
+        if i >= 1000:
+            exit()
+        # tennis_c3_e: 0.0078
+        # tennis_c3_e_sim: 0.0078
+        # tennis_c3: 0.0093
         dic_labels = predictor.dic_labels
-        post_processor.process(frame, detected, boxes, confs, ids, dic_labels)
+        post_processor.process(frame, detected, boxes, confs, ids, dic_labels, predict_time)
         
         key=cv2.waitKey(1) & 0xFF
         if key == ord('q'):

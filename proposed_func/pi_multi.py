@@ -1,66 +1,23 @@
 import cv2
 import numpy as np
-import onnxruntime as ort
+import onnxruntime
 import time
 import random
 import serial
 import yaml
-import socket
 from multiprocessing import Process, Queue
 import pickle
-# import threading
 
-
-# class WifiNode():
-#     def __init__(self, real=True, IP="192.168.4.1", PORT=80, BPS=460800):
-#         self.available = True
-#         self.byte_len = len('000'.encode('utf-8'))
-#         if real:
-#             try:
-#                 self.p = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-#                 self.p.settimeout(10)
-#                 self.p.connect((IP, int(PORT)))
-#             except Exception as e:
-#                 print(e)
-#                 self.available = False
-#         else:
-#             self.available = False
-    
-#     def _check(self):
-#         if self.available: # and self.ser.isOpen():
-#             print(f"Serial successful. a:{self.available}|o:to-do")
-#             return True
-#         else:
-#             print(f"Port not available. a:{self.available}|o:to-do")
-#             return False
-
-#     def write_data(self, data="Hello I am Ras PI", encoding='utf-8'):
-#         if self._check():
-#             self.p.send(data.encode(encoding))    #writ a string to port
-#             print("Sent data:", data, "| len:", len(data))
-#         else:
-#             print("Port not available, cannot write")
-        
-#     def read_data(self, decoding='utf-8'):
-#         if self._check():
-#             response = self.p.recv(self.byte_len)
-#             print("Received data:", response, "|len:", len(response))
-#             response = response.decode(decoding)
-#             print("Received data(decoded):", response, "|len:", len(response))
-#             return response
-#         else:
-#             return "Port not available, cannot read"
 
 class SerialNode:
     def __init__(self, real=True, PORT='/dev/ttyUSB0', BPS=115200):
-        # self.ser = serial.Serial(PORT, BPS, timeout=3)
+        # self.data_buffer = []
         self.available = True
         self.current_time = time.time()
         print("Connecting...")
         if real:
             try:
                 self.ser = serial.Serial(PORT, BPS, timeout=1)
-                
                 print("Connected. ")
             except Exception as e:
                 print(e)
@@ -68,10 +25,6 @@ class SerialNode:
                 print("Fail to connect. ")
         else:
             self.available = False
-        
-        
-        # self.write_data()
-        # time.sleep(1)
     
     def _check(self):
         if self.available and self.ser.isOpen():
@@ -83,13 +36,10 @@ class SerialNode:
 
     def write_data(self, data="Hi I am Pi"):
         if self._check():
-            # print(self.current_time - time.time())
             if time.time() - self.current_time > 1: 
                 self.ser.write(str(data).encode());    #writ a string to port
                 print("Sent data:", data)
                 self.current_time = time.time()
-            # else:
-                
         else:
             print("Port not available, cannot write")
         
@@ -127,11 +77,9 @@ class Camera():
     
     def multi_get_frame(self, queue):
         while True:
-            # print("asdasdsasd")
-            # if self.current_time - time.time() > 0.1:
             if queue.empty():
                 if self.start:
-                    _, serialized_data = queue.get()
+                    _, serialized_data, bruh = queue.get()
                     if _ == 2:
                         # while time.time() - self.current_time < 1:
                         #     pass
@@ -146,158 +94,177 @@ class Camera():
                         #     self.current_time = time.time()
                         # time.sleep(1)
                         serialized_frame = pickle.dumps(self.get_frame())
-                        queue.put([0, serialized_frame])
-                        # self.has_photo = True
+                        queue.put([0, serialized_frame, time.time() - self.current_time])
                         print("Camera put frame. ")
                     else:
-                        queue.put([_, serialized_data])
-                        # print("Camera put frame. ")
+                        queue.put([_, serialized_data, bruh])
                 else:
                     serialized_frame = pickle.dumps(self.get_frame())
-                    queue.put([0, serialized_frame])
-                    # self.has_photo = True
+                    queue.put([0, serialized_frame, time.time() - self.current_time])
                     self.start = True
                     print("Camera put frame. ")
                     
-            # else:
-                
-            # else:
-                # if time.time() - self.current_time > 1:
-                # print("Camera waiting. ")
-
-                # self.current_time = time.time()
-    
-    # def thread_frame(self):
-    #     global shared_frame, cam_end
-    #     while not cam_end.is_set():
-    #         with threading.Lock():
-    #             success, img = self.cap.read()
-    #             img = cv2.flip(img, -1)
-    #             shared_frame = img
-            # cv2.imshow("real-time vision", img)
-            # cv2.resizeWindow('real-time vision', 640, 480)
-            # cv2.waitKey(1)
-    
+                print("Camera time:", time.time() - self.current_time)
+                self.current_time = time.time()
 
 class Predictor():
     def __init__(self, yaml_path):
         with open(yaml_path, 'r') as file:
             params = yaml.safe_load(file)
         
-        self.net = ort.InferenceSession(params['model_path'], ort.SessionOptions())
+        self.net = onnxruntime.InferenceSession(params['model_path'])
         self.model_h = params['model_h']
         self.model_w = params['model_w']
-        self.nl = params['nl']
-        self.na = params['na']
         self.stride = params['stride']
-        self.anchor_grid = np.asarray(params['anchors'], dtype=np.float32).reshape(self.nl, -1, 2)
-        self.dic_labels = params['dic_labels']
+        self.dic_labels = list(params['dic_labels'].values())
         self.target_ids = params['target_ids']
         self.thred_nms = params['thred_nms']
         self.thred_cond = params['thred_cond']
         
-        # self.current_time = time.time()
+        self.current_time = time.time()
+        
+        # # 读取图片
+        # img = cv2.imread(r"D:\HKU\Year3\sem2\ELEC3848\project\ino_github\ELEC3848_automatic_vehicle\yolo_train\tennis_dataset2\val\file4.jpg")
+        # bboxes = self.detection(img)
     
-    def _make_grid(self, nx, ny):
-        xv, yv = np.meshgrid(np.arange(ny), np.arange(nx))
-        return np.stack((xv, yv), 2).reshape((-1, 2)).astype(np.float32)
+    # 数据预处理
+    def _preprocess(self, src_img):
+        size = [self.model_w, self.model_h]
+        output = cv2.resize(src_img,(size[0], size[1]),interpolation=cv2.INTER_AREA)
+        output = output.transpose(2,0,1)
+        output = output.reshape((1, 3, size[1], size[0])) / 255
 
+        return output.astype('float32')
     
-    def cal_outputs(self, outs):
-        row_ind = 0
-        grid = [np.zeros(1)] * self.nl
-        for i in range(self.nl):
-            h, w = int(self.model_w/ self.stride[i]), int(self.model_h / self.stride[i])
-            length = int(self.na * h * w)
-            if grid[i].shape[2:4] != (h, w):
-                grid[i] = self._make_grid(w, h)
-    
-            outs[row_ind:row_ind + length, 0:2] = (outs[row_ind:row_ind + length, 0:2] * 2. - 0.5 + np.tile(
-                grid[i], (self.na, 1))) * int(self.stride[i])
-            outs[row_ind:row_ind + length, 2:4] = (outs[row_ind:row_ind + length, 2:4] * 2) ** 2 * np.repeat(
-                self.anchor_grid[i], h * w, axis=0)
-            row_ind += length
-        return outs
-
-    def post_process_opencv(self, outputs, img_h, img_w):
-        conf = outputs[:,4].tolist()
-        c_x = outputs[:,0] / self.model_w * img_w
-        c_y = outputs[:,1] / self.model_h * img_h
-        w  = outputs[:,2] / self.model_w * img_w
-        h  = outputs[:,3] / self.model_h * img_h
-        p_cls = outputs[:,5:]
-        if len(p_cls.shape)==1:
-            p_cls = np.expand_dims(p_cls,1)
-        cls_id = np.argmax(p_cls,axis=1)
-    
-        p_x1 = np.expand_dims(c_x-w/2,-1)
-        p_y1 = np.expand_dims(c_y-h/2,-1)
-        p_x2 = np.expand_dims(c_x+w/2,-1)
-        p_y2 = np.expand_dims(c_y+h/2,-1)
-        areas = np.concatenate((p_x1,p_y1,p_x2,p_y2),axis=-1)
-        
-        areas = areas.tolist()
-        ids = cv2.dnn.NMSBoxes(areas, conf, self.thred_cond, self.thred_nms)
-        if len(ids)>0:
-            if len(ids.shape) == 1: ids = ids.reshape((-1, ids.shape[0]))
-            valid_ids = ids[np.isin(cls_id[ids], self.target_ids)]
-            return  np.array(areas)[valid_ids], np.array(conf)[valid_ids], cls_id[valid_ids]
-        else:
-            return [], [], []
-
-    def infer_img(self, frame):
-        t1 = time.time()
-        
-        # 图像预处理
-        img = cv2.resize(frame, [self.model_w, self.model_h], interpolation=cv2.INTER_AREA)
-        # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = img.astype(np.float32) / 255.0
-        blob = np.expand_dims(np.transpose(img, (2, 0, 1)), axis=0)
-    
-        # 模型推理
-        outs = self.net.run(None, {self.net.get_inputs()[0].name: blob})[0].squeeze(axis=0)
-        outs = self.cal_outputs(outs)
-        img_h, img_w, _ = np.shape(frame)
-        # print(img_h, img_w)
-        boxes, confs, ids = self.post_process_opencv(outs, img_h, img_w)
-        
-        detected = len(ids)
-        
-        predict_time = time.time() - t1
-        print("Predict time:", predict_time)
-        
-        return detected, boxes, confs, ids, predict_time
-
     def multi_predict(self, queue):
         while True:
-            # if self.current_time - time.time() > 0.1:
             if not queue.empty():
-                _, serialized_frame = queue.get()
+                _, serialized_frame, cumul_time = queue.get()
                 if _ == 0:
                     shared_data = pickle.loads(serialized_frame)
                     detected, boxes, confs, ids, predict_time = self.infer_img(shared_data)
                     serialized_img = pickle.dumps([shared_data, detected, boxes, confs, ids, self.dic_labels, predict_time])
-                    queue.put([1, serialized_img])
+                    queue.put([1, serialized_img, time.time() - self.current_time + cumul_time])
                     print("Predictor put img. ")
                 else:
-                    queue.put([_, serialized_frame])
-                # else:
-                    # print("Predictor waiting. ")
-                    # if time.time() - self.current_time > 1:
-                        # self.current_time = time.time()
-                # self.current_time = time.time()
-            # time.sleep(0.1}
+                    queue.put([_, serialized_frame, cumul_time])
+                    
+                print("Predictor time:", time.time() - self.current_time)
+                self.current_time = time.time()
+        
+    def infer_img(self, img):
+        t1 = time.time()
+        pred = []
+        # 输入图像的原始宽高
+        H, W, _ = img.shape
+        # 数据预处理: resize, 1/255
+        data = self._preprocess(img)
+        # 模型推理
+        input_name = self.net.get_inputs()[0].name
+        feature_map = self.net.run([], {input_name: data})[0][0]
+        
+        # 输出特征图转置: CHW, HWC
+        feature_map = feature_map.transpose(1, 2, 0)
+        # 输出特征图的宽高
+        feature_map_height = feature_map.shape[0]
+        feature_map_width = feature_map.shape[1]
+        # 特征图后处理
+        for h in range(feature_map_height):
+            for w in range(feature_map_width):
+                data = feature_map[h][w]
+
+                # 解析检测框置信度
+                obj_score, cls_score = data[0], data[5:].max()
+                score = (obj_score ** 0.6) * (cls_score ** 0.4)
+
+                # 阈值筛选
+                if score > self.thred_cond:
+                    # 检测框类别
+                    cls_index = np.argmax(data[5:])
+                    if cls_index not in self.target_ids:
+                        continue
+                    # 检测框中心点偏移
+                    x_offset, y_offset = tanh(data[1]), tanh(data[2])
+                    # 检测框归一化后的宽高
+                    box_width, box_height = sigmoid(data[3]), sigmoid(data[4])
+                    # 检测框归一化后中心点
+                    box_cx = (w + x_offset) / feature_map_width
+                    box_cy = (h + y_offset) / feature_map_height
+                    
+                    # cx,cy,w,h => x1, y1, x2, y2
+                    x1, y1 = box_cx - 0.5 * box_width, box_cy - 0.5 * box_height
+                    x2, y2 = box_cx + 0.5 * box_width, box_cy + 0.5 * box_height
+                    x1, y1, x2, y2 = int(x1 * W), int(y1 * H), int(x2 * W), int(y2 * H)
+
+                    pred.append([x1, y1, x2, y2, score, cls_index])
+                    
+        if len(pred) == 0:
+            return [0, 0, 0, 0, time.time()-t1]
+        else:
+            print(len([1] + self._nms(np.array(pred)) + [time.time()-t1]))
+            return [1] + self._nms(np.array(pred)) + [time.time()-t1]
+    
+    # nms算法
+    def _nms(self, dets):
+        # dets:N*M,N是bbox的个数，M的前4位是对应的（x1,y1,x2,y2），第5位是对应的分数
+        # #thresh:0.3,0.5....
+        x1 = dets[:, 0]
+        y1 = dets[:, 1]
+        x2 = dets[:, 2]
+        y2 = dets[:, 3]
+        scores = dets[:, 4]
+        areas = (x2 - x1 + 1) * (y2 - y1 + 1)  # 求每个bbox的面积
+        order = scores.argsort()[::-1]  # 对分数进行倒排序
+        keep = []  # 用来保存最后留下来的bboxx下标
+
+        while order.size > 0:
+            i = order[0]  # 无条件保留每次迭代中置信度最高的bbox
+            keep.append(i)
+
+            # 计算置信度最高的bbox和其他剩下bbox之间的交叉区域
+            xx1 = np.maximum(x1[i], x1[order[1:]])
+            yy1 = np.maximum(y1[i], y1[order[1:]])
+            xx2 = np.minimum(x2[i], x2[order[1:]])
+            yy2 = np.minimum(y2[i], y2[order[1:]])
+
+            # 计算置信度高的bbox和其他剩下bbox之间交叉区域的面积
+            w = np.maximum(0.0, xx2 - xx1 + 1)
+            h = np.maximum(0.0, yy2 - yy1 + 1)
+            inter = w * h
+
+            # 求交叉区域的面积占两者（置信度高的bbox和其他bbox）面积和的必烈
+            ovr = inter / (areas[i] + areas[order[1:]] - inter)
+
+            # 保留ovr小于thresh的bbox，进入下一次迭代。
+            inds = np.where(ovr <= self.thred_nms)[0]
+
+            # 因为ovr中的索引不包括order[0]所以要向后移动一位
+            order = order[inds + 1]
+
+        dets = np.array(dets)
+        boxes = dets[keep, 0:4]
+        confs = dets[keep, 4]
+        clses = dets[keep, 5].astype(int)
+
+        return [boxes, confs, clses]
+
+# sigmoid函数
+def sigmoid(x):
+    return 1. / (1 + np.exp(-x))
+
+# tanh函数
+def tanh(x):
+    return 2. / (1 + np.exp(-2 * x)) - 1
 
 class PostProcessor():
     def __init__(self, display=True):
         self.display = display
         self.usb_serial = SerialNode(True)
-        # self.wifi_server = WifiNode("192.168.50.21")
         self.center_thres = 80
         self.area_range = 1000
         self.desired_area = 34000
         
-        self.current_time2 = time.time()
+        self.current_time = time.time()
         
         self.data_buffer = []
     
@@ -307,7 +274,7 @@ class PostProcessor():
         else:
             return 0
     
-    def process(self, frame, detected, boxes, confs, ids, dic_labels, predict_time, temp_data):
+    def process(self, frame, detected, boxes, confs, ids, dic_labels, cumul_time, temp_data):
         t1 = time.time()
         if detected:
             for box, score, id in zip(boxes, confs, ids):
@@ -332,55 +299,46 @@ class PostProcessor():
                 label = '%s:%.2f'%(dic_labels[id], score)
                 if self.display:
                     self._plot_one_box(box.astype(np.int16), frame, color=(255,0,0), label=label, line_thickness=None)
+                
+                if id != 0:
+                    self.data_buffer = []
+                else:
+                    self.data_buffer.append(id)
         else:
             print("No target. ")
             data_to_be_write = '000'
-        
-        
+            self.data_buffer = []
+            
         process_time = (time.time()-t1)
         print("Postprocess time:", process_time, "\n")
         
-        str_FPS = "FPS: %.2f"%(1./(predict_time + process_time))
+        str_FPS = "FPS: %.2f"%(1./(cumul_time + process_time))
         cv2.putText(frame, str_FPS, (50,50), cv2.FONT_HERSHEY_COMPLEX, 1, (0,255,0), 3)
         if self.display:
             cv2.imshow("real-time vision", frame)
             cv2.resizeWindow('real-time vision', 640, 480)
             cv2.waitKey(1)
         
-        # ta = time.time()
-        # self.usb_serial.ser.close()
-        # self.usb_serial = SerialNode()
-        self.usb_serial.write_data(data_to_be_write)
-        # self.usb_serial.read_data()
-        # tb = time.time()
-        
-        # while time.time() - t1 < 1:
-        #     pass
+        if len(self.data_buffer) == 5:
+            self.usb_serial.write_data(data_to_be_write)
 
     def multi_postprocess(self, queue):
         while True:
-            # if self.current_time2 - time.time() > 0.1:
-            # print("asdasdsasd")
             if not queue.empty():
-                _, serialized_data = queue.get()
+                _, serialized_data, cumul_time = queue.get()
                 if _ == 1:
                     print("Postprocessor get data. ")
                     # shared_frame = pickle.loads(serialized_data)
                     frame, detected, boxes, confs, ids, dict_labels, predict_time = pickle.loads(serialized_data)
                     temp_data = '(A)'
-                    self.process(frame, detected, boxes, confs, ids, dict_labels, predict_time, temp_data)
-                    # serialized_img = pickle.dumps([detected, boxes, confs, ids, predict_time])
-                    # queue.put([1, serialized_img])
-                    queue.put([2, 'bruh'])
+                    self.process(frame, detected, boxes, confs, ids, dict_labels, cumul_time, temp_data)
+                    queue.put([2, 'bruh', 0])
                     print("Predictor processed. ")
                 else:
-                    queue.put([_, serialized_data])
-            # else:
-                # if time.time() - self.current_time > 1:
-                    # print("Predictor waiting. ")
+                    queue.put([_, serialized_data, cumul_time])
+                print("PostProcessor time:", time.time() - self.current_time)
+                self.current_time = time.time()
                     
-
-                # self.current2_time = time.time()
     def _is_centered(self, x, w):
         # only determine x centering
         temp = self.center_thres / 2
@@ -392,7 +350,7 @@ class PostProcessor():
             return 2
         elif right_thres < x < w:
             return 3
-        # return 
+        
     
     def _plot_one_box(self, x, img, color=None, label=None, line_thickness=None):
         """
@@ -430,17 +388,12 @@ class PostProcessor():
             )
 
 
+
 if __name__ == "__main__":
-    # cam_is_thread = True
-    # shared_frame = None
-    # cam_end = False
-    # if cam_is_thread:
-    # cam_thread = threading.Thread(target=cap.thread_frame)
-    # cam_thread.start()
-    
+  
     queue = Queue()
     cap = Camera()
-    predictor = Predictor(r"/home/3848c4/Desktop/3848/tennis.yaml")
+    predictor = Predictor(r"/home/3848c4/Desktop/3848/tennis_c3_fast.yaml")
     post_processor = PostProcessor(True)
     
     cam_process = Process(target=cap.multi_get_frame, args=(queue,))
@@ -451,34 +404,12 @@ if __name__ == "__main__":
     predict_process.start()
     post_processor_process.start()
 
-    temp_data = '(A)'
-    # global shared_frame
+    # temp_data = '(A)'
     while True:
-        # frame = cap.get_frame()
-        # with threading.Lock():
-        # detected, boxes, confs, ids, predict_time = predictor.infer_img(shared_frame)
-        # dic_labels = predictor.dic_labels
-        # post_processor.process(shared_frame, detected, boxes, confs, ids, dic_labels, predict_time, temp_data)
-        
         key=cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             post_processor.usb_serial.ser.close()
-            
-            # cam_end.set()
-            # cam_thread.join()
             break
-        # elif key == ord('t'):
-        #     if temp_data == '(A)':
-        #         temp_data = '(Z)'
-        #     else:
-        #         temp_data = '(A)'
-        #     time.sleep(2)
-        # elif key & 0xFF == ord('s'):
-        #     flag_det = not flag_det
-        #     print(flag_det)
-        # elif key == ord("c"):
-        #     i += 1
-        #     file_name = a[i]
 
     cap.cap.release()
     cv2.destroyAllWindows()
