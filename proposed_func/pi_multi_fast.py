@@ -85,23 +85,24 @@ class Camera():
         img = cv2.flip(img, -1)
         return img
     
-    def multi_get_frame(self, queue):
+    def multi_get_frame(self, this_queue, next_queue):
         while True:
-            if queue.empty():
-                if self.start:
-                    _, serialized_data, bruh = queue.get()
-                    if _ == 2:
-                        serialized_frame = pickle.dumps(self.get_frame())
-                        queue.put([0, serialized_frame, time.time() - self.current_time])
-                        # print("Camera put frame. ")
-                    else:
-                        queue.put([_, serialized_data, bruh])
-                else:
+            # if time.time() - self.current_time > 0.05:
+            if not self.start:
+                self.start = True
+                serialized_frame = pickle.dumps(self.get_frame())
+                next_queue.put([0, serialized_frame, time.time() - self.current_time])
+                self.current_time = time.time()
+            
+            if self.start and not this_queue.empty():
+                _, serialized_data, bruh = this_queue.get()
+                if _ == 2:
                     serialized_frame = pickle.dumps(self.get_frame())
-                    queue.put([0, serialized_frame, time.time() - self.current_time])
-                    self.start = True
+                    next_queue.put([0, serialized_frame, time.time() - self.current_time])
                     # print("Camera put frame. ")
-                    
+                else:
+                    this_queue.put([_, serialized_data, bruh])
+            
                 # print("Camera time:", time.time() - self.current_time)
                 self.current_time = time.time()
 
@@ -122,18 +123,19 @@ class Predictor():
         
         self.current_time = time.time()
     
-    def multi_predict(self, queue):
+    def multi_predict(self, this_queue, next_queue):
         while True:
-            if not queue.empty():
-                _, serialized_frame, cumul_time = queue.get()
+            # if time.time() - self.current_time > 0.05:
+            if not this_queue.empty():
+                _, serialized_frame, cumul_time = this_queue.get()
                 if _ == 0:
                     shared_data = pickle.loads(serialized_frame)
                     detected, boxes, confs, ids, predict_time = self.infer_img(shared_data)
                     serialized_img = pickle.dumps([shared_data, detected, boxes, confs, ids, self.dic_labels, predict_time])
-                    queue.put([1, serialized_img, time.time() - self.current_time + cumul_time])
+                    next_queue.put([1, serialized_img, time.time() - self.current_time + cumul_time])
                     # print("Predictor put img. ")
                 else:
-                    queue.put([_, serialized_frame, cumul_time])
+                    this_queue.put([_, serialized_frame, cumul_time])
                     
                 # print("Predictor time:", time.time() - self.current_time)
                 self.current_time = time.time()
@@ -243,8 +245,6 @@ class Predictor():
         boxes = np.array(dets[keep, 0:4][best_i].reshape((1, 4)))
         confs = np.array(confs[best_i].reshape((1, )))
         clses = np.array(dets[keep, 5][best_i].reshape((1, ))).astype(int)
-        
-        # print(boxes, confs, clses)
 
         return [boxes, confs, clses]
 
@@ -253,10 +253,11 @@ class PostProcessor():
     def __init__(self, display=True):
         self.display = display
         self.usb_serial = SerialNode(True)
-        self.center_thres = [180, 280]
+        self.center_thres = [240, 320]
         self.xy_range = 30
         self.desired_xy = [300, 100]
-        self.desired_xyxy = [270, -20, 380, 70]
+        # 318 115
+        self.desired_xyxy = [200, 50, 360, 350]
         
         self.current_time = time.time()
         
@@ -265,63 +266,59 @@ class PostProcessor():
         
         self.no_target = False
     
-    def multi_postprocess(self, queue):
-        while True:
-            if not queue.empty():
-                _, serialized_data, cumul_time = queue.get()
-                if _ == 1:
-                    # print("Postprocessor get data. ")
-                    # shared_frame = pickle.loads(serialized_data)
-                    frame, detected, boxes, confs, ids, dict_labels, predict_time = pickle.loads(serialized_data)
-                    temp_data = '(A)'
-                    self.process(frame, detected, boxes, confs, ids, dict_labels, cumul_time, temp_data)
-                    queue.put([2, 'bruh', 0])
-                    # print("Predictor processed. ")
-                else:
-                    queue.put([_, serialized_data, cumul_time])
-                # print("PostProcessor time:", time.time() - self.current_time)
-                self.current_time = time.time()
+    def multi_postprocess(self, this_queue, next_queue):
+        # while True:
+        # if time.time() - self.current_time > 0.05:
+        if not this_queue.empty():
+            _, serialized_data, cumul_time = this_queue.get()
+            if _ == 1:
+                frame, detected, boxes, confs, ids, dict_labels, predict_time = pickle.loads(serialized_data)
+                temp_data = '(A)'
+                self.process(frame, detected, boxes, confs, ids, dict_labels, cumul_time, temp_data)
+                next_queue.put([2, 'bruh', 0])
+            else:
+                this_queue.put([_, serialized_data, cumul_time])
+            # print("PostProcessor time:", time.time() - self.current_time)
+            self.current_time = time.time()
     
     def process(self, frame, detected, boxes, confs, ids, dic_labels, cumul_time, temp_data):
         t1 = time.time()
         if detected:
-            # print(boxes, confs, ids)
-            # print(boxes.shape, confs.shape, ids.shape)
             for box, score, id in zip(boxes, confs, ids):
                 
                 print("Target detected:", dic_labels[id])
                 c_coors = np.array([box[0]+box[2], box[1]+box[3]]) / 2
-                print("Center coor:", c_coors)
-                print("Box:", box)
-                print('Area:', (box[2]-box[0])*(box[3]-box[1]))
+                # print("Center coor:", c_coors)
+                # print("Box:", box)
+                # print('Area:', (box[2]-box[0])*(box[3]-box[1]))
                 
                 data_to_be_write = ""
                 data_to_be_write += '1'
                 data_to_be_write += str(self._is_centered(c_coors[0], frame.shape[1]))
-                print("Center?:", data_to_be_write[-1])
+                # print("Center?:", data_to_be_write[-1])
                 data_to_be_write += str(self._can_catch(c_coors))
-                print("Can catch?:", data_to_be_write[-1])
-
-                # while time.time() - t1 < 2:
-                #     pass
-                
+                # print("Can catch?:", data_to_be_write[-1])
                 label = '%s:%.2f'%(dic_labels[id], score)
                 if self.display:
                     self._plot_one_box(box.astype(np.int16), frame, color=(255,0,0), label=label, line_thickness=None)
+                    
         else:
             print("No target. ")
-            # self.no_target = True
             data_to_be_write = '000'
         
+        self._plot_one_box(np.array([self.center_thres[0], 0, self.center_thres[1], 480]).astype(np.int16), frame, color=(0,0,255), label="center_box", line_thickness=None)
+        self._plot_one_box(np.array(self.desired_xyxy).astype(np.int16), frame, color=(0,255,0), label="catch_box", line_thickness=None)
+        
         process_time = time.time() - t1
+        # print("Overall time:", cumul_time + process_time)
         str_FPS = "FPS: %.2f"%(1./(cumul_time + process_time))
         cv2.putText(frame, str_FPS, (50,50), cv2.FONT_HERSHEY_COMPLEX, 1, (0,255,0), 3)
         if self.display:
             cv2.imshow("real-time vision", frame)
             cv2.resizeWindow('real-time vision', 640, 480)
-            cv2.waitKey(1)
+            # cv2.waitKey(1)
             
-        print(self.data_buffer)
+        # print(self.data_buffer)
 
         if self.data_buffer != data_to_be_write:
             self.data_buffer_count = 0
@@ -332,17 +329,13 @@ class PostProcessor():
 
         if self.data_buffer_count == 7:
             self.usb_serial.write_data(data_to_be_write)
-            self.data_buffer = 'y'
+            self.data_buffer = 'sent'
             self.data_buffer_count = 0
             
 
     def _can_catch(self, coors):
         x = coors[0]
         y = coors[1]
-        # if (self.desired_xy[0] - self.xy_range < x < self.desired_xy[0] + self.xy_range) and (self.desired_xy[1] - self.xy_range < y < self.desired_xy[1] + self.xy_range):
-        #     return 1
-        # else:
-        #     return 0
         if self.desired_xyxy[0] < x < self.desired_xyxy[2] and self.desired_xyxy[1] < y < self.desired_xyxy[3]:
             return 1
         else:
@@ -351,14 +344,11 @@ class PostProcessor():
                     
     def _is_centered(self, x, w):
         # only determine x centering
-        # temp = self.center_thres / 2
-        # left_thres = w/2 - temp
-        # right_thres = w/2 + temp
         if 0 < x < self.center_thres[0]:
             return 1
-        elif left_thres < x < right_thres:
+        elif self.center_thres[0] < x < self.center_thres[1]:
             return 2
-        elif right_thres < x < w:
+        elif self.center_thres[1] < x < w:
             return 3
         
     def _plot_one_box(self, x, img, color=None, label=None, line_thickness=None):
@@ -388,29 +378,34 @@ class PostProcessor():
 
 if __name__ == "__main__":
   
-    queue = Queue()
+    queue1 = Queue()
+    queue2 = Queue()
+    queue3 = Queue()
     cap = Camera()
     predictor = Predictor(r"/home/3848c4/Desktop/3848/tennis_c3_fast.yaml")
     post_processor = PostProcessor(True)
     
-    # cam_process = Process(target=cap.multi_get_frame, args=(queue,))
-    predict_process = Process(target=predictor.multi_predict, args=(queue,))
-    post_processor_process = Process(target=post_processor.multi_postprocess, args=(queue,))
+    cam_process = Process(target=cap.multi_get_frame, args=(queue1, queue2))
+    predict_process = Process(target=predictor.multi_predict, args=(queue2, queue3))
+    # post_processor_process = Process(target=post_processor.multi_postprocess, args=(queue,))
     
-    # cam_process.start()
+    cam_process.start()
     predict_process.start()
-    post_processor_process.start()
+    # post_processor_process.start()
 
     # temp_data = '(A)'
     while True:
-        cap.multi_get_frame(queue)
+        # cap.multi_get_frame(queue)
+        post_processor.multi_postprocess(queue3, queue1)
 		
         key=cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             post_processor.usb_serial.ser.close()
             
+            cam_process.terminate()
             predict_process.terminate()
-            post_processor_process.terminate()
+            time.sleep(2)
+            # post_processor_process.terminate()
             break
 
     cap.cap.release()
